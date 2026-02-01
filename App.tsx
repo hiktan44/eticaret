@@ -1,10 +1,10 @@
 
 import React, { useState, useRef } from 'react';
-import { 
-  analyzeProduct, 
-  generateProductImage, 
-  editProductImage, 
-  generateProductVideo 
+import {
+  analyzeProduct,
+  generateProductImage,
+  editProductImage,
+  generateProductVideo
 } from './services/geminiService';
 import { ProductContent, ImageAsset, AspectRatio, ImageSize } from './types';
 import LoadingOverlay from './components/LoadingOverlay';
@@ -41,20 +41,36 @@ const App: React.FC = () => {
   const [images, setImages] = useState<ImageAsset[]>([]);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [editPrompt, setEditPrompt] = useState('');
-  
+
   // Yeni oluşturulan görsel önizlemesi
   const [pendingGeneratedImage, setPendingGeneratedImage] = useState<string | null>(null);
-  
+
   const [showImagePrompt, setShowImagePrompt] = useState(false);
   const [imagePrompt, setImagePrompt] = useState('');
   const [imageAltText, setImageAltText] = useState('');
-  
+
+
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>(AspectRatio.SQUARE);
   const [imageSize, setImageSize] = useState<ImageSize>(ImageSize.K1);
 
-  // Yükleme slotları
+  // Yeni eklenen: Ürün bilgileri için input alanları
+  const [inputProductName, setInputProductName] = useState('');
+  const [inputDescription, setInputDescription] = useState('');
+
+  // Teknik belgeler için state
+  const [techDocSlots, setTechDocSlots] = useState<UploadSlot[]>([]);
+  const techDocInputRef = useRef<HTMLInputElement>(null);
+
+  // Düzenleme modu
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [editableContent, setEditableContent] = useState<ProductContent | null>(null);
+
+  // Yükleme slotları - maksimum 10'a çıkarıldı
   const [uploadSlots, setUploadSlots] = useState<UploadSlot[]>([]);
+  const MAX_UPLOAD_SLOTS = 10;
+  const MAX_TECH_DOC_SLOTS = 5;
+
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imagePromptRef = useRef<HTMLDivElement>(null);
@@ -72,6 +88,9 @@ const App: React.FC = () => {
       setVideoUrl(null);
       setUploadSlots([]);
       setPendingGeneratedImage(null);
+      setInputProductName('');
+      setInputDescription('');
+      setTechDocSlots([]);
     }
   };
 
@@ -79,8 +98,16 @@ const App: React.FC = () => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
 
+    // Maksimum slot kontrolü
+    if (uploadSlots.length >= MAX_UPLOAD_SLOTS) {
+      alert(lang === 'tr' ? `Maksimum ${MAX_UPLOAD_SLOTS} resim yükleyebilirsiniz.` : `You can upload maximum ${MAX_UPLOAD_SLOTS} images.`);
+      return;
+    }
+
     const newSlots: UploadSlot[] = [];
     for (const file of files) {
+      if (uploadSlots.length + newSlots.length >= MAX_UPLOAD_SLOTS) break;
+
       const dataUrl = await new Promise<string>((resolve) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result as string);
@@ -93,8 +120,38 @@ const App: React.FC = () => {
     e.target.value = '';
   };
 
+  const handleTechDocUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    // Maksimum slot kontrolü
+    if (techDocSlots.length >= MAX_TECH_DOC_SLOTS) {
+      alert(lang === 'tr' ? `Maksimum ${MAX_TECH_DOC_SLOTS} teknik belge yükleyebilirsiniz.` : `You can upload maximum ${MAX_TECH_DOC_SLOTS} technical documents.`);
+      return;
+    }
+
+    const newSlots: UploadSlot[] = [];
+    for (const file of files) {
+      if (techDocSlots.length + newSlots.length >= MAX_TECH_DOC_SLOTS) break;
+
+      const dataUrl = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.readAsDataURL(file);
+      });
+      newSlots.push({ id: Math.random().toString(), dataUrl, file });
+    }
+
+    setTechDocSlots(prev => [...prev, ...newSlots]);
+    e.target.value = '';
+  };
+
   const clearSlot = (id: string) => {
     setUploadSlots(prev => prev.filter(s => s.id !== id));
+  };
+
+  const clearTechDoc = (id: string) => {
+    setTechDocSlots(prev => prev.filter(s => s.id !== id));
   };
 
   const deleteThumbnail = (index: number) => {
@@ -123,9 +180,22 @@ const App: React.FC = () => {
         mimeType: s.file.type
       }));
 
-      const content = await analyzeProduct(imagesToAnalyze, lang);
+      // Teknik belgeleri hazırla
+      const techDocsToAnalyze = techDocSlots.map(s => ({
+        data: s.dataUrl.split(',')[1],
+        mimeType: s.file.type
+      }));
+
+      // Ürün bilgilerini context olarak gönder
+      const content = await analyzeProduct(imagesToAnalyze, {
+        lang,
+        productName: inputProductName.trim() || undefined,
+        description: inputDescription.trim() || undefined,
+        technicalDocs: techDocsToAnalyze.length > 0 ? techDocsToAnalyze : undefined
+      });
+
       setProductContent(content);
-      
+
       const initialAssets: ImageAsset[] = uploadSlots.map((s, idx) => ({
         id: `init-${idx}-${Date.now()}`,
         url: s.dataUrl,
@@ -145,6 +215,33 @@ const App: React.FC = () => {
     }
   };
 
+  const toggleEditMode = () => {
+    if (!isEditMode && productContent) {
+      // Düzenleme moduna geçerken mevcut içeriği kopyala
+      setEditableContent({ ...productContent });
+    }
+    setIsEditMode(!isEditMode);
+  };
+
+  const saveEdits = () => {
+    if (editableContent) {
+      setProductContent(editableContent);
+      setIsEditMode(false);
+    }
+  };
+
+  const cancelEdits = () => {
+    setEditableContent(null);
+    setIsEditMode(false);
+  };
+
+  const updateEditableField = (field: keyof ProductContent, value: any) => {
+    if (editableContent) {
+      setEditableContent({ ...editableContent, [field]: value });
+    }
+  };
+
+
   const handleCopyContent = () => {
     if (!productContent) return;
     const text = `${lang === 'tr' ? 'Başlık' : 'Title'}: ${productContent.title}\n${lang === 'tr' ? 'Kategori' : 'Category'}: ${productContent.category}\n${lang === 'tr' ? 'Önerilen Fiyat' : 'Suggested Price'}: ${productContent.suggestedPrice}\n\n${lang === 'tr' ? 'Açıklama' : 'Description'}:\n${productContent.description}\n\n${lang === 'tr' ? 'Önemli Özellikler' : 'Key Features'}:\n${productContent.features.map(f => `- ${f}`).join('\n')}\n\n${lang === 'tr' ? 'Etiketler' : 'Tags'}: ${productContent.tags.join(', ')}`;
@@ -155,7 +252,7 @@ const App: React.FC = () => {
   const exportPDF = () => {
     if (!productContent) return;
     const doc = new jsPDF();
-    doc.setTextColor(0, 0, 0); 
+    doc.setTextColor(0, 0, 0);
     const margin = 20;
     let y = margin;
     doc.setFontSize(22);
@@ -185,6 +282,176 @@ const App: React.FC = () => {
     doc.text(`${lang === 'tr' ? 'Etiketler' : 'Tags'}: ${productContent.tags.join(', ')}`, margin, y);
     doc.save(`${productContent.title.replace(/\s+/g, '_')}_listing.pdf`);
   };
+
+  const exportAsHTML = () => {
+    if (!productContent) return;
+
+    // Resimleri base64 olarak embed et
+    const imagesHTML = images.map((img, idx) => `
+      <div style="margin-bottom: 20px;">
+        <img src="${img.url}" alt="${img.altText || productContent.title}" style="max-width: 100%; height: auto; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);" />
+        <p style="font-size: 12px; color: #666; margin-top: 8px; font-style: italic;">${img.altText || `Görsel ${idx + 1}`}</p>
+      </div>
+    `).join('');
+
+    const htmlContent = `
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${productContent.title}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 40px 20px;
+      line-height: 1.6;
+    }
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 24px;
+      padding: 40px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    }
+    h1 {
+      font-size: 36px;
+      font-weight: 900;
+      color: #1a202c;
+      margin-bottom: 12px;
+      line-height: 1.2;
+    }
+    .category {
+      display: inline-block;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 24px;
+    }
+    .price {
+      font-size: 42px;
+      font-weight: 900;
+      color: #10b981;
+      margin: 24px 0;
+      padding: 20px;
+      background: #f0fdf4;
+      border-radius: 16px;
+      text-align: center;
+    }
+    .description {
+      font-size: 16px;
+      color: #4a5568;
+      margin: 24px 0;
+      line-height: 1.8;
+    }
+    .section-title {
+      font-size: 24px;
+      font-weight: 800;
+      color: #1a202c;
+      margin: 32px 0 16px 0;
+      border-bottom: 3px solid #667eea;
+      padding-bottom: 8px;
+    }
+    .features {
+      list-style: none;
+      margin: 16px 0;
+    }
+    .features li {
+      padding: 12px 16px;
+      margin: 8px 0;
+      background: #f7fafc;
+      border-left: 4px solid #667eea;
+      border-radius: 8px;
+      font-size: 14px;
+      color: #2d3748;
+      font-weight: 600;
+    }
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 16px 0;
+    }
+    .tag {
+      background: #edf2f7;
+      color: #4a5568;
+      padding: 6px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .images-section {
+      margin-top: 32px;
+    }
+    .footer {
+      margin-top: 40px;
+      padding-top: 24px;
+      border-top: 2px solid #e2e8f0;
+      text-align: center;
+      color: #718096;
+      font-size: 12px;
+    }
+    .footer a {
+      color: #667eea;
+      text-decoration: none;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="category">${productContent.category}</div>
+    <h1>${productContent.title}</h1>
+    
+    <div class="price">${productContent.suggestedPrice}</div>
+    
+    <div class="description">${productContent.description}</div>
+    
+    <h2 class="section-title">${lang === 'tr' ? 'Öne Çıkan Özellikler' : 'Key Features'}</h2>
+    <ul class="features">
+      ${productContent.features.map(f => `<li>${f}</li>`).join('')}
+    </ul>
+    
+    <h2 class="section-title">${lang === 'tr' ? 'Etiketler' : 'Tags'}</h2>
+    <div class="tags">
+      ${productContent.tags.map(tag => `<span class="tag">${tag}</span>`).join('')}
+    </div>
+    
+    ${images.length > 0 ? `
+      <h2 class="section-title">${lang === 'tr' ? 'Ürün Görselleri' : 'Product Images'}</h2>
+      <div class="images-section">
+        ${imagesHTML}
+      </div>
+    ` : ''}
+    
+    <div class="footer">
+      <p>${lang === 'tr' ? 'Bu sayfa' : 'This page was created by'} <a href="https://thirdhand.com.tr" target="_blank">ThirdHand AI</a> ${lang === 'tr' ? 'tarafından oluşturulmuştur' : ''}</p>
+      <p style="margin-top: 8px; font-size: 10px;">${new Date().toLocaleDateString('tr-TR')}</p>
+    </div>
+  </div>
+</body>
+</html>
+    `;
+
+    const blob = new Blob([htmlContent], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${productContent.title.replace(/\s+/g, '_')}_listing.html`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
 
   const exportCardAsPNG = async () => {
     if (!productCardRef.current) return;
@@ -290,7 +557,7 @@ const App: React.FC = () => {
       const base64 = currentImg.url.split(',')[1];
       const mimeType = "image/png";
       const editedUrl = await editProductImage(base64, mimeType, editPrompt);
-      
+
       setImages(prev => {
         const next = [...prev];
         next[selectedImageIndex] = { ...currentImg, url: editedUrl };
@@ -306,37 +573,45 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen pb-20 text-black bg-white">
+    <div className="mesh-gradient min-h-screen pb-20 text-slate-100">
       {loading && <LoadingOverlay message={loading} />}
 
-      <header className="glass-card sticky top-0 z-40 border-b border-white/20">
+      <header className="glass-panel sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <AiLogo size={48} />
+            <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-orange-500 rounded-xl flex items-center justify-center text-white font-black text-sm italic shadow-lg shadow-emerald-500/20">AI</div>
             <div>
-              <h1 className="text-xl font-extrabold text-black tracking-tight">{t.appTitle}</h1>
-              <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">{t.ecommerceIntel}</p>
+              <h1 className="text-lg font-black tracking-tight text-white leading-none">{t.appTitle}</h1>
+              <a
+                href="https://thirdhand.com.tr"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[10px] text-emerald-400 hover:text-emerald-300 font-black uppercase tracking-widest mt-0.5 block transition-colors"
+              >
+                ThirdHand AI tarafından yapılmıştır
+              </a>
             </div>
           </div>
           <div className="flex items-center gap-4">
-            <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
-               <button 
-                 onClick={() => setLang('tr')}
-                 className={`px-3 py-1.5 rounded-lg text-[10px] font-black transition-all ${lang === 'tr' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-               >
-                 TR
-               </button>
-               <button 
-                 onClick={() => setLang('en')}
-                 className={`px-3 py-1.5 rounded-lg text-[10px] font-black transition-all ${lang === 'en' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-               >
-                 EN
-               </button>
+            <div className="flex bg-white/5 border border-white/10 p-1 rounded-xl">
+              <button
+                onClick={() => setLang('tr')}
+                className={`px-3 py-1.5 rounded-lg text-[10px] font-black transition-all ${lang === 'tr' ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}
+              >
+                TR
+              </button>
+              <button
+                onClick={() => setLang('en')}
+                className={`px-3 py-1.5 rounded-lg text-[10px] font-black transition-all ${lang === 'en' ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}
+              >
+                EN
+              </button>
             </div>
+            <div className="px-4 py-1.5 bg-white/5 border border-white/10 rounded-full text-[10px] font-black tracking-widest text-emerald-400">v2.3 REAL-AI</div>
             {productContent && (
-              <button 
+              <button
                 onClick={handleResetApp}
-                className="bg-white/80 hover:bg-red-50 text-black hover:text-red-600 px-5 py-2.5 rounded-2xl text-sm font-bold transition-all flex items-center gap-2 border border-slate-200 shadow-sm"
+                className="bg-white/10 hover:bg-white/20 text-white px-5 py-2.5 rounded-2xl text-sm font-bold transition-all flex items-center gap-2 border border-white/10"
               >
                 {t.newProduct}
               </button>
@@ -349,12 +624,92 @@ const App: React.FC = () => {
         {!productContent ? (
           <div className="flex flex-col items-center justify-center min-h-[75vh] text-center space-y-12 animate-in fade-in zoom-in-95 duration-700">
             <div className="space-y-4">
-              <h2 className="text-5xl font-[900] text-black tracking-tight leading-tight">
-                {t.heroTitle.split(' ').map((word, i) => (word === 'Yapay' || word === 'AI') ? <span key={i} className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-indigo-600">{word} </span> : word + ' ')}
+              <h2 className="text-5xl lg:text-7xl font-[1000] leading-none tracking-tighter text-white">
+                {t.heroTitle.split(' ').slice(0, 2).join(' ')}<br />
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-white to-orange-500">
+                  {t.heroTitle.split(' ').slice(2).join(' ')}
+                </span>
               </h2>
-              <p className="text-black max-w-xl mx-auto text-lg font-bold leading-relaxed">
+              <p className="text-slate-400 max-w-xl mx-auto text-lg font-medium leading-relaxed">
                 {t.heroDesc}
               </p>
+            </div>
+
+            {/* Ürün Bilgileri Girişi */}
+            <div className="w-full max-w-4xl space-y-6">
+              <div className="glass-card-light p-8 rounded-[3rem] shadow-2xl space-y-4">
+                <div>
+                  <label className="block text-sm font-bold text-navy mb-2">
+                    Ürün Adı (Opsiyonel)
+                  </label>
+                  <input
+                    type="text"
+                    value={inputProductName}
+                    onChange={(e) => setInputProductName(e.target.value)}
+                    placeholder="Örn: Premium Deri Çanta"
+                    className="w-full px-6 py-4 rounded-2xl border-2 border-slate-200 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100 outline-none transition-all text-navy font-bold bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-navy mb-2">
+                    Ürün Açıklaması / Ek Bilgiler (Opsiyonel)
+                  </label>
+                  <textarea
+                    value={inputDescription}
+                    onChange={(e) => setInputDescription(e.target.value)}
+                    placeholder="Ürün hakkında ek bilgiler, özellikler veya notlar ekleyin..."
+                    rows={4}
+                    className="w-full px-6 py-4 rounded-2xl border-2 border-slate-200 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100 outline-none transition-all text-navy font-bold resize-none bg-white"
+                  />
+                </div>
+              </div>
+
+              {/* Teknik Belge Yükleme */}
+              <div className="glass-card-light p-8 rounded-[3rem] shadow-2xl space-y-4">
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  Teknik Belgeler (Opsiyonel) - PDF, Word, Excel vb.
+                </label>
+                <div className="flex flex-wrap gap-3">
+                  {techDocSlots.map((doc) => (
+                    <div key={doc.id} className="relative group">
+                      <div className="px-4 py-2 bg-slate-50 rounded-xl border-2 border-slate-200 flex items-center gap-2">
+                        <span className="material-symbols-outlined text-emerald-600 text-sm">description</span>
+                        <span className="text-xs font-bold text-navy max-w-[150px] truncate">
+                          {doc.file.name}
+                        </span>
+                        <button
+                          onClick={() => clearTechDoc(doc.id)}
+                          className="ml-2 text-red-600 hover:bg-red-100 rounded-full p-1 transition-colors"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {techDocSlots.length < MAX_TECH_DOC_SLOTS && (
+                    <button
+                      onClick={() => techDocInputRef.current?.click()}
+                      className="px-6 py-2 border-2 border-dashed border-slate-300 rounded-xl hover:border-emerald-500 hover:bg-emerald-50 transition-all flex items-center gap-2 group bg-white"
+                    >
+                      <span className="material-symbols-outlined text-slate-400 group-hover:text-emerald-600 text-sm">add</span>
+                      <span className="text-xs font-bold text-slate-600 group-hover:text-emerald-600">
+                        Belge Ekle ({techDocSlots.length}/{MAX_TECH_DOC_SLOTS})
+                      </span>
+                    </button>
+                  )}
+                  <input
+                    type="file"
+                    ref={techDocInputRef}
+                    onChange={handleTechDocUpload}
+                    className="hidden"
+                    accept=".pdf,.doc,.docx,.xls,.xlsx,.txt"
+                    multiple
+                  />
+                </div>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6 w-full max-w-6xl">
@@ -363,7 +718,7 @@ const App: React.FC = () => {
                   <div className="w-full h-full rounded-[2rem] overflow-hidden border-4 border-white group relative shadow-xl transition-transform hover:scale-[1.02]">
                     <img src={slot.dataUrl} className="w-full h-full object-cover" />
                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                      <button 
+                      <button
                         onClick={() => clearSlot(slot.id)}
                         className="bg-white text-red-600 p-2.5 rounded-xl shadow-xl hover:scale-110 active:scale-95 transition-all"
                       >
@@ -375,33 +730,38 @@ const App: React.FC = () => {
                   </div>
                 </div>
               ))}
-              <button 
-                onClick={() => fileInputRef.current?.click()}
-                className="aspect-square w-full border-2 border-dashed border-slate-400 rounded-[2rem] flex flex-col items-center justify-center gap-2 hover:border-blue-500 hover:bg-blue-50/50 transition-all group bg-white/50"
-              >
-                <svg className="w-8 h-8 text-black group-hover:text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4" />
-                </svg>
-                <span className="text-[10px] font-black text-black uppercase tracking-widest">{t.addImg}</span>
-              </button>
-              <input 
-                type="file" 
+              {uploadSlots.length < MAX_UPLOAD_SLOTS && (
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="aspect-square w-full border-4 border-dashed border-slate-300 rounded-[2rem] flex flex-col items-center justify-center gap-2 hover:border-orange-500 hover:bg-white/10 transition-all group bg-white/5"
+                >
+                  <svg className="w-10 h-10 text-slate-400 group-hover:text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4" />
+                  </svg>
+                  <span className="text-[10px] font-black text-slate-300 group-hover:text-white uppercase tracking-widest">
+                    Resim Ekle ({uploadSlots.length}/{MAX_UPLOAD_SLOTS})
+                  </span>
+                </button>
+              )}
+              <input
+                type="file"
                 ref={fileInputRef}
                 onChange={handleFileUpload}
-                className="hidden" 
-                accept="image/*" 
+                className="hidden"
+                accept="image/*"
                 multiple
               />
             </div>
 
             <div className="pt-4">
-              <button 
+              <button
                 onClick={triggerAnalysis}
-                className="group relative bg-black text-white px-14 py-6 rounded-full font-black text-xl shadow-2xl hover:bg-blue-600 hover:-translate-y-1 active:translate-y-0 transition-all flex items-center gap-4 disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden"
+                className="group relative bg-navy text-white px-14 py-6 rounded-full font-black text-xl shadow-2xl hover:bg-slate-800 hover:-translate-y-1 active:translate-y-0 transition-all flex items-center gap-4 disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden"
                 disabled={uploadSlots.length === 0}
               >
-                <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                <div className="absolute inset-0 bg-gradient-to-r from-emerald-500 to-orange-500 opacity-0 group-hover:opacity-100 transition-opacity"></div>
                 <span className="relative z-10">{t.startAnalysis}</span>
+                <span className="material-symbols-outlined text-emerald-400 relative z-10">auto_fix_high</span>
               </button>
             </div>
           </div>
@@ -419,7 +779,7 @@ const App: React.FC = () => {
                       <img src={pendingGeneratedImage} className="max-w-[80%] max-h-[70%] rounded-2xl shadow-2xl border-4 border-white mb-6" />
                       <div className="flex gap-4">
                         <button onClick={() => setPendingGeneratedImage(null)} className="px-6 py-3 text-black font-black text-sm uppercase">{t.cancel}</button>
-                        <button 
+                        <button
                           onClick={addPendingToGallery}
                           className="bg-black text-white px-8 py-3 rounded-full font-black flex items-center gap-2 shadow-xl hover:scale-105 transition-transform"
                         >
@@ -436,39 +796,39 @@ const App: React.FC = () => {
                 <div className="flex gap-5 overflow-x-auto pb-4 scrollbar-hide px-2">
                   {images.map((img, idx) => (
                     <div key={img.id} className="relative shrink-0 group/thumb">
-                      <button 
-                        onClick={() => setSelectedImageIndex(idx)} 
+                      <button
+                        onClick={() => setSelectedImageIndex(idx)}
                         className={`w-28 h-28 rounded-3xl overflow-hidden border-4 transition-all ${selectedImageIndex === idx ? 'border-blue-500 scale-110 shadow-lg' : 'border-white'}`}
                       >
                         <img src={img.url} className="w-full h-full object-cover" />
                       </button>
                       <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover/thumb:opacity-100 transition-opacity z-20">
-                         <button 
-                           onClick={(e) => { e.stopPropagation(); deleteThumbnail(idx); }}
-                           className="bg-white text-red-600 p-1.5 rounded-lg shadow-lg border border-red-50 hover:bg-red-50"
-                         >
-                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M6 18L18 6M6 6l12 12" /></svg>
-                         </button>
-                         <button 
-                           onClick={(e) => { e.stopPropagation(); handleDownloadImage(img.url, `ai-img-${idx}`); }}
-                           className="bg-white text-blue-600 p-1.5 rounded-lg shadow-lg border border-blue-50 hover:bg-blue-50"
-                         >
-                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                         </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); deleteThumbnail(idx); }}
+                          className="bg-white text-red-600 p-1.5 rounded-lg shadow-lg border border-red-50 hover:bg-red-50"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M6 18L18 6M6 6l12 12" /></svg>
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDownloadImage(img.url, `ai-img-${idx}`); }}
+                          className="bg-white text-blue-600 p-1.5 rounded-lg shadow-lg border border-blue-50 hover:bg-blue-50"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                        </button>
                       </div>
                     </div>
                   ))}
-                  <button 
+                  <button
                     onClick={() => setShowImagePrompt(!showImagePrompt)}
                     className={`w-28 h-28 rounded-3xl border-4 border-dashed shrink-0 flex items-center justify-center transition-all bg-white/50 hover:bg-blue-50/50 ${showImagePrompt ? 'border-blue-500 text-blue-600' : 'border-slate-400 text-black'}`}
                   >
                     <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
                   </button>
                 </div>
-                
+
                 <div className="flex gap-4">
                   {images.length > 0 && (
-                    <button 
+                    <button
                       onClick={handleDownloadAllImages}
                       className="flex items-center gap-2 text-[10px] font-black text-black bg-white/50 hover:bg-white px-4 py-2 rounded-xl border border-white transition-all shadow-sm"
                     >
@@ -481,15 +841,15 @@ const App: React.FC = () => {
                 {showImagePrompt && (
                   <div className="glass-card p-8 rounded-[2.5rem] space-y-5 shadow-xl border border-blue-100">
                     <h4 className="font-black text-black text-xl">{t.imagePromptLabel}</h4>
-                    <textarea 
+                    <textarea
                       placeholder={t.imagePromptPlaceholder}
                       className="w-full bg-white border border-slate-300 rounded-3xl px-6 py-5 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/20 text-black"
                       rows={3}
                       value={imagePrompt}
                       onChange={(e) => setImagePrompt(e.target.value)}
                     />
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       placeholder={t.imageAltPlaceholder}
                       className="w-full bg-white border border-slate-300 rounded-2xl px-6 py-4 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/20 text-black"
                       value={imageAltText}
@@ -505,8 +865,8 @@ const App: React.FC = () => {
                 <div className="glass-card p-8 rounded-[2.5rem] space-y-6 shadow-xl">
                   <span className="text-[11px] font-[900] text-black uppercase tracking-[0.2em]">{t.quickEdit}</span>
                   <div className="flex gap-4">
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       placeholder={t.editPlaceholder}
                       className="flex-1 bg-white border border-slate-300 rounded-2xl px-6 py-4 text-sm font-bold outline-none focus:ring-2 focus:ring-slate-900/10 text-black"
                       value={editPrompt}
@@ -519,30 +879,73 @@ const App: React.FC = () => {
             </div>
 
             <div className="space-y-8">
-              <div 
-                ref={productCardRef} 
+              <div
+                ref={productCardRef}
                 className="glass-card p-12 rounded-[3.5rem] shadow-2xl space-y-10 sticky top-28 border border-white text-black"
                 style={{ color: '#000000', backgroundColor: '#ffffff' }}
               >
                 <div className="flex justify-between items-start">
-                  <div className="space-y-4">
-                    <span className="inline-block bg-blue-600 text-white text-[10px] font-black px-4 py-1.5 rounded-full uppercase shadow-lg shadow-blue-500/20">{productContent.category}</span>
-                    <h2 className="text-4xl font-[900] text-black tracking-tight leading-tight">{productContent.title}</h2>
+                  <div className="space-y-4 flex-1">
+                    {isEditMode && editableContent ? (
+                      <>
+                        <input
+                          type="text"
+                          value={editableContent.category}
+                          onChange={(e) => updateEditableField('category', e.target.value)}
+                          className="inline-block bg-blue-600 text-white text-[10px] font-black px-4 py-1.5 rounded-full uppercase shadow-lg shadow-blue-500/20 border-2 border-blue-700 outline-none"
+                        />
+                        <input
+                          type="text"
+                          value={editableContent.title}
+                          onChange={(e) => updateEditableField('title', e.target.value)}
+                          className="block w-full text-4xl font-[900] text-black tracking-tight leading-tight bg-transparent border-2 border-slate-300 rounded-2xl px-4 py-2 outline-none focus:border-blue-500"
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <span className="inline-block bg-blue-600 text-white text-[10px] font-black px-4 py-1.5 rounded-full uppercase shadow-lg shadow-blue-500/20">{productContent.category}</span>
+                        <h2 className="text-4xl font-[900] text-black tracking-tight leading-tight">{productContent.title}</h2>
+                      </>
+                    )}
                   </div>
                   <div className="flex gap-2">
+                    {isEditMode ? (
+                      <>
+                        <button onClick={saveEdits} className="p-3 bg-green-600 text-white rounded-2xl shadow-sm hover:bg-green-700 transition-colors" title="Kaydet">
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" /></svg>
+                        </button>
+                        <button onClick={cancelEdits} className="p-3 bg-red-600 text-white rounded-2xl shadow-sm hover:bg-red-700 transition-colors" title="İptal">
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
+                        </button>
+                      </>
+                    ) : (
+                      <button onClick={toggleEditMode} className="p-3 bg-blue-600 text-white rounded-2xl shadow-sm hover:bg-blue-700 transition-colors" title="Düzenle">
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                      </button>
+                    )}
                     <button onClick={handleCopyContent} className="p-3 bg-white border border-slate-100 rounded-2xl text-black shadow-sm hover:bg-slate-50 transition-colors"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg></button>
                     <div className="relative group/export">
-                       <button className="p-3 bg-white border border-slate-100 rounded-2xl text-black shadow-sm hover:bg-slate-50 transition-colors"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg></button>
-                       <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-2xl shadow-2xl opacity-0 invisible group-hover/export:opacity-100 group-hover/export:visible transition-all p-2 space-y-1 z-50 border border-slate-100">
-                         <button onClick={exportPDF} className="w-full text-left px-4 py-2 text-xs font-black hover:bg-slate-50 rounded-lg text-black">{t.exportPdf}</button>
-                         <button onClick={exportCardAsPNG} className="w-full text-left px-4 py-2 text-xs font-black hover:bg-slate-50 rounded-lg text-black">{t.exportPng}</button>
-                       </div>
+                      <button className="p-3 bg-white border border-slate-100 rounded-2xl text-black shadow-sm hover:bg-slate-50 transition-colors"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg></button>
+                      <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-2xl shadow-2xl opacity-0 invisible group-hover/export:opacity-100 group-hover/export:visible transition-all p-2 space-y-1 z-50 border border-slate-100">
+                        <button onClick={exportPDF} className="w-full text-left px-4 py-2 text-xs font-black hover:bg-slate-50 rounded-lg text-black">{t.exportPdf}</button>
+                        <button onClick={exportAsHTML} className="w-full text-left px-4 py-2 text-xs font-black hover:bg-slate-50 rounded-lg text-black">{t.exportHtml}</button>
+                        <button onClick={exportCardAsPNG} className="w-full text-left px-4 py-2 text-xs font-black hover:bg-slate-50 rounded-lg text-black">{t.exportPng}</button>
+                      </div>
                     </div>
                   </div>
                 </div>
 
                 <div className="bg-blue-50/50 p-6 rounded-3xl border border-blue-100 flex items-center justify-between shadow-inner">
-                  <div className="text-3xl font-[900] text-blue-600">{productContent.suggestedPrice}</div>
+                  {isEditMode && editableContent ? (
+                    <input
+                      type="text"
+                      value={editableContent.suggestedPrice}
+                      onChange={(e) => updateEditableField('suggestedPrice', e.target.value)}
+                      className="text-3xl font-[900] text-blue-600 bg-transparent border-2 border-blue-300 rounded-xl px-4 py-2 outline-none focus:border-blue-500 flex-1"
+                    />
+                  ) : (
+                    <div className="text-3xl font-[900] text-blue-600">{productContent.suggestedPrice}</div>
+                  )}
                   <div className="text-right">
                     <p className="text-[10px] font-black text-blue-900 uppercase">{t.suggestedPrice}</p>
                     <p className="text-xs font-black text-black italic">{t.marketAverage}</p>
@@ -551,24 +954,131 @@ const App: React.FC = () => {
 
                 <div className="space-y-4">
                   <h3 className="text-xs font-black text-black uppercase tracking-widest flex items-center gap-2"><span className="w-6 h-0.5 bg-black"></span>{t.productStory}</h3>
-                  <p className="text-black leading-[1.7] text-lg font-black">{productContent.description}</p>
+                  {isEditMode && editableContent ? (
+                    <textarea
+                      value={editableContent.description}
+                      onChange={(e) => updateEditableField('description', e.target.value)}
+                      rows={6}
+                      className="w-full text-black leading-[1.7] text-lg font-black bg-transparent border-2 border-slate-300 rounded-2xl px-4 py-3 outline-none focus:border-blue-500 resize-none"
+                    />
+                  ) : (
+                    <p className="text-black leading-[1.7] text-lg font-black">{productContent.description}</p>
+                  )}
                 </div>
 
                 <div className="space-y-6">
                   <h3 className="text-xs font-black text-black uppercase tracking-widest flex items-center gap-2"><span className="w-6 h-0.5 bg-black"></span>{t.topFeatures}</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {productContent.features.map((f, i) => (
-                      <div key={i} className="flex gap-4 text-sm font-bold text-black bg-white/60 p-5 rounded-3xl border border-white shadow-sm">{f}</div>
-                    ))}
+                    {isEditMode && editableContent ? (
+                      editableContent.features.map((f, i) => (
+                        <div key={i} className="flex gap-2 items-center">
+                          <input
+                            type="text"
+                            value={f}
+                            onChange={(e) => {
+                              const newFeatures = [...editableContent.features];
+                              newFeatures[i] = e.target.value;
+                              updateEditableField('features', newFeatures);
+                            }}
+                            className="flex-1 text-sm font-bold text-black bg-white/60 p-5 rounded-3xl border-2 border-slate-300 outline-none focus:border-blue-500"
+                          />
+                          <button
+                            onClick={() => {
+                              const newFeatures = editableContent.features.filter((_, idx) => idx !== i);
+                              updateEditableField('features', newFeatures);
+                            }}
+                            className="p-2 text-red-600 hover:bg-red-100 rounded-full transition-colors"
+                          >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                          </button>
+                        </div>
+                      ))
+                    ) : (
+                      productContent.features.map((f, i) => (
+                        <div key={i} className="flex gap-4 text-sm font-bold text-black bg-white/60 p-5 rounded-3xl border border-white shadow-sm">{f}</div>
+                      ))
+                    )}
+                  </div>
+                  {isEditMode && editableContent && (
+                    <button
+                      onClick={() => {
+                        const newFeatures = [...editableContent.features, 'Yeni özellik'];
+                        updateEditableField('features', newFeatures);
+                      }}
+                      className="w-full py-3 border-2 border-dashed border-slate-400 rounded-2xl hover:border-blue-500 hover:bg-blue-50 transition-all flex items-center justify-center gap-2 group"
+                    >
+                      <svg className="w-5 h-5 text-slate-600 group-hover:text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg>
+                      <span className="text-sm font-bold text-slate-600 group-hover:text-blue-600">Özellik Ekle</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Etiketler Bölümü */}
+                <div className="space-y-4">
+                  <h3 className="text-xs font-black text-black uppercase tracking-widest flex items-center gap-2"><span className="w-6 h-0.5 bg-black"></span>Etiketler</h3>
+                  <div className="flex flex-wrap gap-2">
+                    {isEditMode && editableContent ? (
+                      <>
+                        {editableContent.tags.map((tag, i) => (
+                          <div key={i} className="flex items-center gap-1 bg-slate-100 px-3 py-1.5 rounded-full border-2 border-slate-300">
+                            <input
+                              type="text"
+                              value={tag}
+                              onChange={(e) => {
+                                const newTags = [...editableContent.tags];
+                                newTags[i] = e.target.value;
+                                updateEditableField('tags', newTags);
+                              }}
+                              className="bg-transparent text-xs font-bold text-slate-700 outline-none w-24"
+                            />
+                            <button
+                              onClick={() => {
+                                const newTags = editableContent.tags.filter((_, idx) => idx !== i);
+                                updateEditableField('tags', newTags);
+                              }}
+                              className="text-red-600 hover:bg-red-100 rounded-full p-0.5"
+                            >
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                            </button>
+                          </div>
+                        ))}
+                        <button
+                          onClick={() => {
+                            const newTags = [...editableContent.tags, 'yeni-etiket'];
+                            updateEditableField('tags', newTags);
+                          }}
+                          className="px-3 py-1.5 border-2 border-dashed border-slate-400 rounded-full hover:border-blue-500 hover:bg-blue-50 transition-all flex items-center gap-1"
+                        >
+                          <svg className="w-3 h-3 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg>
+                          <span className="text-xs font-bold text-slate-600">Etiket Ekle</span>
+                        </button>
+                      </>
+                    ) : (
+                      productContent.tags.map((tag, i) => (
+                        <span key={i} className="bg-slate-100 text-slate-700 px-3 py-1.5 rounded-full text-xs font-bold border border-slate-200">
+                          {tag}
+                        </span>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                {/* SEO Kelimeleri Bölümü */}
+                <div className="space-y-4">
+                  <h3 className="text-xs font-black text-black uppercase tracking-widest flex items-center gap-2"><span className="w-6 h-0.5 bg-black"></span>{t.seoKeys}</h3>
+                  <div className="bg-slate-50 p-4 rounded-2xl border-2 border-slate-200">
+                    <p className="text-sm text-slate-700 font-medium leading-relaxed">
+                      {productContent.tags.join(', ')}
+                    </p>
                   </div>
                 </div>
 
                 <div className="pt-10 border-t border-slate-100 flex justify-between items-center">
-                   <div className="flex gap-4">
-                      <div className="space-y-2"><label className="text-[10px] uppercase font-black block text-black">{t.format}</label><select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value as AspectRatio)} className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-xs font-black outline-none text-black"><option value="1:1">1:1</option><option value="16:9">16:9</option></select></div>
-                      <div className="space-y-2"><label className="text-[10px] uppercase font-black block text-black">{t.quality}</label><select value={imageSize} onChange={(e) => setImageSize(e.target.value as ImageSize)} className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-xs font-black outline-none text-black"><option value="1K">1K</option><option value="2K">2K</option></select></div>
-                   </div>
-                   <div className="text-right"><p className="text-[10px] font-black text-black uppercase tracking-widest">AI Engine</p><p className="text-xs font-bold text-black">Gemini 3.0 Pro</p></div>
+                  <div className="flex gap-4">
+                    <div className="space-y-2"><label className="text-[10px] uppercase font-black block text-black">{t.format}</label><select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value as AspectRatio)} className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-xs font-black outline-none text-black"><option value="1:1">1:1</option><option value="16:9">16:9</option></select></div>
+                    <div className="space-y-2"><label className="text-[10px] uppercase font-black block text-black">{t.quality}</label><select value={imageSize} onChange={(e) => setImageSize(e.target.value as ImageSize)} className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-xs font-black outline-none text-black"><option value="1K">1K</option><option value="2K">2K</option></select></div>
+                  </div>
+                  <div className="text-right"><p className="text-[10px] font-black text-black uppercase tracking-widest">AI Engine</p><p className="text-xs font-bold text-black">Gemini 3.0 Pro</p></div>
                 </div>
               </div>
             </div>

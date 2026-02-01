@@ -19,7 +19,7 @@ export const translations = {
     startProduction: "Üretimi Başlat",
     quickEdit: "Hızlı AI Düzenleme",
     editPlaceholder: "Örn: 'Arka planı plaj yap'",
-    apply: "Uygula",
+    apply: "Resim Üret",
     videoStudio: "Video Stüdyosu",
     videoPromptPlaceholder: "Video sahnelerini detaylandırın...",
     videoDuration: "VİDEO SÜRESİ",
@@ -44,7 +44,10 @@ export const translations = {
     directorChair: "Yapay zeka yönetmen koltuğunda...",
     preparingExport: "Görsel döküman hazırlanıyor...",
     format: "Format",
-    quality: "Kalite"
+    quality: "Kalite",
+    productName: "Ürün İsmi (Opsiyonel)",
+    productDesc: "Ürün Tarifi / Notlar",
+    techDocs: "Teknik Belgeler (PDF/Resim)"
   },
   en: {
     appTitle: "AI Product Studio",
@@ -65,7 +68,7 @@ export const translations = {
     startProduction: "Start Production",
     quickEdit: "Quick AI Edit",
     editPlaceholder: "e.g. 'Make the background a beach'",
-    apply: "Apply",
+    apply: "Generate Image",
     videoStudio: "Video Studio",
     videoPromptPlaceholder: "Detail the video scenes...",
     videoDuration: "VIDEO DURATION",
@@ -90,6 +93,9 @@ export const translations = {
     directorChair: "AI in the director's chair...",
     preparingExport: "Preparing visual document...",
     format: "Format",
-    quality: "Quality"
+    quality: "Quality",
+    productName: "Product Name (Optional)",
+    productDesc: "Product Description / Notes",
+    techDocs: "Technical Docs (PDF/Image)"
   }
 };
