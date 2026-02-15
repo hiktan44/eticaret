@@ -1,1090 +1,528 @@
 
-import React, { useState, useRef } from 'react';
-import {
-  analyzeProduct,
-  generateProductImage,
-  editProductImage,
-  generateProductVideo
-} from './services/geminiService';
-import { ProductContent, ImageAsset, AspectRatio, ImageSize } from './types';
-import LoadingOverlay from './components/LoadingOverlay';
+import React, { useState, useRef, useEffect } from 'react';
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
-import JSZip from "jszip";
-import { translations } from './i18n';
-
-const AiLogo = ({ size = 40 }: { size?: number }) => (
-  <svg width={size} height={size} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M35 25L15 40V60L35 75L50 60V40L35 25Z" fill="#00A3FF" fillOpacity="0.85" />
-    <path d="M35 25L50 40V60L35 75L20 60V40L35 25Z" fill="#0085CC" fillOpacity="0.4" />
-    <path d="M65 25L85 40V60L65 75L50 60V40L65 25Z" fill="#FF8A00" fillOpacity="0.85" />
-    <path d="M65 25L50 40V60L65 75L80 60V40L65 25Z" fill="#CC6E00" fillOpacity="0.4" />
-    <path d="M50 25L65 40V60L50 75L35 60V40L50 25Z" fill="white" />
-    <path d="M50 25L60 35H40L50 25Z" fill="#333333" />
-    <path d="M50 75L60 65H40L50 75Z" fill="#333333" />
-    <text x="50" y="54" dominantBaseline="middle" textAnchor="middle" fill="#000000" fontSize="18" fontWeight="900" fontFamily="Plus Jakarta Sans, sans-serif">AI</text>
-  </svg>
-);
-
-interface UploadSlot {
-  id: string;
-  dataUrl: string;
-  file: File;
-}
+import { 
+  analyzeProductWithThinking,
+  generateProfessionalImage,
+  editImagePrompt,
+  generateVeoVideo
+} from './services/geminiService';
+import { ProductContent, ImageAsset, VideoAsset, AspectRatio, ImageSize } from './types';
+import LoadingOverlay from './components/LoadingOverlay';
 
 const App: React.FC = () => {
-  const [lang, setLang] = useState<'tr' | 'en'>('tr');
-  const t = translations[lang];
-
+  const [apiKeySelected, setApiKeySelected] = useState<boolean | null>(null);
   const [loading, setLoading] = useState<string | null>(null);
-  const [productContent, setProductContent] = useState<ProductContent | null>(null);
+  const [activeTab, setActiveTab] = useState<'content' | 'visuals' | 'video'>('content');
+  
+  // Data State
+  const [product, setProduct] = useState<ProductContent | null>(null);
   const [images, setImages] = useState<ImageAsset[]>([]);
-  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
-  const [editPrompt, setEditPrompt] = useState('');
+  const [videos, setVideos] = useState<VideoAsset[]>([]);
+  const [selectedImgIdx, setSelectedImgIdx] = useState(0);
 
-  // Yeni oluşturulan görsel önizlemesi
-  const [pendingGeneratedImage, setPendingGeneratedImage] = useState<string | null>(null);
+  // Inputs
+  const [imageSlots, setImageSlots] = useState<{data: string, file: File, id: string}[]>([]);
+  const [catalogSlots, setCatalogSlots] = useState<{data: string, file: File, id: string}[]>([]);
+  
+  const [extraNote, setExtraNote] = useState('');
+  const [genPrompt, setGenPrompt] = useState('');
+  const [genAR, setGenAR] = useState<AspectRatio>('1:1');
+  const [genSize, setGenSize] = useState<ImageSize>('1K');
+  const [videoPrompt, setVideoPrompt] = useState('');
+  const [videoAR, setVideoAR] = useState<'16:9' | '9:16'>('16:9');
 
-  const [showImagePrompt, setShowImagePrompt] = useState(false);
-  const [imagePrompt, setImagePrompt] = useState('');
-  const [imageAltText, setImageAltText] = useState('');
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const catalogInputRef = useRef<HTMLInputElement>(null);
+  const resultRef = useRef<HTMLDivElement>(null);
 
-
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [aspectRatio, setAspectRatio] = useState<AspectRatio>(AspectRatio.SQUARE);
-  const [imageSize, setImageSize] = useState<ImageSize>(ImageSize.K1);
-
-  // Yeni eklenen: Ürün bilgileri için input alanları
-  const [inputProductName, setInputProductName] = useState('');
-  const [inputDescription, setInputDescription] = useState('');
-
-  // Teknik belgeler için state
-  const [techDocSlots, setTechDocSlots] = useState<UploadSlot[]>([]);
-  const techDocInputRef = useRef<HTMLInputElement>(null);
-
-  // Düzenleme modu
-  const [isEditMode, setIsEditMode] = useState(false);
-  const [editableContent, setEditableContent] = useState<ProductContent | null>(null);
-
-  // Yükleme slotları - maksimum 10'a çıkarıldı
-  const [uploadSlots, setUploadSlots] = useState<UploadSlot[]>([]);
-  const MAX_UPLOAD_SLOTS = 10;
-  const MAX_TECH_DOC_SLOTS = 5;
-
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const imagePromptRef = useRef<HTMLDivElement>(null);
-  const productCardRef = useRef<HTMLDivElement>(null);
-
-  const handleResetApp = () => {
-    if (window.confirm(t.resetConfirm)) {
-      setProductContent(null);
-      setImages([]);
-      setSelectedImageIndex(0);
-      setEditPrompt('');
-      setShowImagePrompt(false);
-      setImagePrompt('');
-      setImageAltText('');
-      setVideoUrl(null);
-      setUploadSlots([]);
-      setPendingGeneratedImage(null);
-      setInputProductName('');
-      setInputDescription('');
-      setTechDocSlots([]);
-    }
-  };
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    if (files.length === 0) return;
-
-    // Maksimum slot kontrolü
-    if (uploadSlots.length >= MAX_UPLOAD_SLOTS) {
-      alert(lang === 'tr' ? `Maksimum ${MAX_UPLOAD_SLOTS} resim yükleyebilirsiniz.` : `You can upload maximum ${MAX_UPLOAD_SLOTS} images.`);
-      return;
-    }
-
-    const newSlots: UploadSlot[] = [];
-    for (const file of files) {
-      if (uploadSlots.length + newSlots.length >= MAX_UPLOAD_SLOTS) break;
-
-      const dataUrl = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.readAsDataURL(file);
-      });
-      newSlots.push({ id: Math.random().toString(), dataUrl, file });
-    }
-
-    setUploadSlots(prev => [...prev, ...newSlots]);
-    e.target.value = '';
-  };
-
-  const handleTechDocUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    if (files.length === 0) return;
-
-    // Maksimum slot kontrolü
-    if (techDocSlots.length >= MAX_TECH_DOC_SLOTS) {
-      alert(lang === 'tr' ? `Maksimum ${MAX_TECH_DOC_SLOTS} teknik belge yükleyebilirsiniz.` : `You can upload maximum ${MAX_TECH_DOC_SLOTS} technical documents.`);
-      return;
-    }
-
-    const newSlots: UploadSlot[] = [];
-    for (const file of files) {
-      if (techDocSlots.length + newSlots.length >= MAX_TECH_DOC_SLOTS) break;
-
-      const dataUrl = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.readAsDataURL(file);
-      });
-      newSlots.push({ id: Math.random().toString(), dataUrl, file });
-    }
-
-    setTechDocSlots(prev => [...prev, ...newSlots]);
-    e.target.value = '';
-  };
-
-  const clearSlot = (id: string) => {
-    setUploadSlots(prev => prev.filter(s => s.id !== id));
-  };
-
-  const clearTechDoc = (id: string) => {
-    setTechDocSlots(prev => prev.filter(s => s.id !== id));
-  };
-
-  const deleteThumbnail = (index: number) => {
-    if (window.confirm(lang === 'tr' ? "Görseli silmek istediğinize emin misiniz?" : "Are you sure you want to delete this image?")) {
-      setImages(prev => {
-        const next = [...prev];
-        next.splice(index, 1);
-        if (selectedImageIndex >= next.length) {
-          setSelectedImageIndex(Math.max(0, next.length - 1));
-        }
-        return next;
-      });
-    }
-  };
-
-  const triggerAnalysis = async () => {
-    if (uploadSlots.length === 0) {
-      alert(lang === 'tr' ? "Lütfen en az bir resim yükleyin." : "Please upload at least one image.");
-      return;
-    }
-
-    setLoading(t.analyzing);
-    try {
-      const imagesToAnalyze = uploadSlots.map(s => ({
-        data: s.dataUrl.split(',')[1],
-        mimeType: s.file.type
-      }));
-
-      // Teknik belgeleri hazırla
-      const techDocsToAnalyze = techDocSlots.map(s => ({
-        data: s.dataUrl.split(',')[1],
-        mimeType: s.file.type
-      }));
-
-      // Ürün bilgilerini context olarak gönder
-      const content = await analyzeProduct(imagesToAnalyze, {
-        lang,
-        productName: inputProductName.trim() || undefined,
-        description: inputDescription.trim() || undefined,
-        technicalDocs: techDocsToAnalyze.length > 0 ? techDocsToAnalyze : undefined
-      });
-
-      setProductContent(content);
-
-      const initialAssets: ImageAsset[] = uploadSlots.map((s, idx) => ({
-        id: `init-${idx}-${Date.now()}`,
-        url: s.dataUrl,
-        type: 'original',
-        altText: `${content.title} - ${lang === 'tr' ? 'Ürün Görseli' : 'Product Image'} ${idx + 1}`
-      }));
-
-      setImages(initialAssets);
-      setSelectedImageIndex(0);
-      setImagePrompt(content.title);
-      setImageAltText(content.title);
-    } catch (error) {
-      console.error("Analysis error", error);
-      alert(lang === 'tr' ? "Ürün analiz edilemedi. Lütfen tekrar deneyin." : "Could not analyze product. Please try again.");
-    } finally {
-      setLoading(null);
-    }
-  };
-
-  const toggleEditMode = () => {
-    if (!isEditMode && productContent) {
-      // Düzenleme moduna geçerken mevcut içeriği kopyala
-      setEditableContent({ ...productContent });
-    }
-    setIsEditMode(!isEditMode);
-  };
-
-  const saveEdits = () => {
-    if (editableContent) {
-      setProductContent(editableContent);
-      setIsEditMode(false);
-    }
-  };
-
-  const cancelEdits = () => {
-    setEditableContent(null);
-    setIsEditMode(false);
-  };
-
-  const updateEditableField = (field: keyof ProductContent, value: any) => {
-    if (editableContent) {
-      setEditableContent({ ...editableContent, [field]: value });
-    }
-  };
-
-
-  const handleCopyContent = () => {
-    if (!productContent) return;
-    const text = `${lang === 'tr' ? 'Başlık' : 'Title'}: ${productContent.title}\n${lang === 'tr' ? 'Kategori' : 'Category'}: ${productContent.category}\n${lang === 'tr' ? 'Önerilen Fiyat' : 'Suggested Price'}: ${productContent.suggestedPrice}\n\n${lang === 'tr' ? 'Açıklama' : 'Description'}:\n${productContent.description}\n\n${lang === 'tr' ? 'Önemli Özellikler' : 'Key Features'}:\n${productContent.features.map(f => `- ${f}`).join('\n')}\n\n${lang === 'tr' ? 'Etiketler' : 'Tags'}: ${productContent.tags.join(', ')}`;
-    navigator.clipboard.writeText(text);
-    alert(t.copySuccess);
-  };
-
-  const exportPDF = () => {
-    if (!productContent) return;
-    const doc = new jsPDF();
-    doc.setTextColor(0, 0, 0);
-    const margin = 20;
-    let y = margin;
-    doc.setFontSize(22);
-    doc.text(productContent.title, margin, y);
-    y += 10;
-    doc.setFontSize(12);
-    doc.text(`${lang === 'tr' ? 'Kategori' : 'Category'}: ${productContent.category}`, margin, y);
-    y += 7;
-    doc.text(`${lang === 'tr' ? 'Fiyat' : 'Price'}: ${productContent.suggestedPrice}`, margin, y);
-    y += 15;
-    doc.setFontSize(14);
-    doc.text(lang === 'tr' ? "Açıklama:" : "Description:", margin, y);
-    y += 7;
-    doc.setFontSize(10);
-    const splitDesc = doc.splitTextToSize(productContent.description, 170);
-    doc.text(splitDesc, margin, y);
-    y += (splitDesc.length * 5) + 10;
-    doc.setFontSize(14);
-    doc.text(lang === 'tr' ? "Özellikler:" : "Features:", margin, y);
-    y += 7;
-    doc.setFontSize(10);
-    productContent.features.forEach(f => {
-      doc.text(`- ${f}`, margin + 5, y);
-      y += 5;
-    });
-    y += 10;
-    doc.text(`${lang === 'tr' ? 'Etiketler' : 'Tags'}: ${productContent.tags.join(', ')}`, margin, y);
-    doc.save(`${productContent.title.replace(/\s+/g, '_')}_listing.pdf`);
-  };
-
-  const exportAsHTML = () => {
-    if (!productContent) return;
-
-    // Resimleri base64 olarak embed et
-    const imagesHTML = images.map((img, idx) => `
-      <div style="margin-bottom: 20px;">
-        <img src="${img.url}" alt="${img.altText || productContent.title}" style="max-width: 100%; height: auto; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);" />
-        <p style="font-size: 12px; color: #666; margin-top: 8px; font-style: italic;">${img.altText || `Görsel ${idx + 1}`}</p>
-      </div>
-    `).join('');
-
-    const htmlContent = `
-<!DOCTYPE html>
-<html lang="tr">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${productContent.title}</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      padding: 40px 20px;
-      line-height: 1.6;
-    }
-    .container {
-      max-width: 900px;
-      margin: 0 auto;
-      background: white;
-      border-radius: 24px;
-      padding: 40px;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-    }
-    h1 {
-      font-size: 36px;
-      font-weight: 900;
-      color: #1a202c;
-      margin-bottom: 12px;
-      line-height: 1.2;
-    }
-    .category {
-      display: inline-block;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-      padding: 8px 16px;
-      border-radius: 20px;
-      font-size: 12px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      margin-bottom: 24px;
-    }
-    .price {
-      font-size: 42px;
-      font-weight: 900;
-      color: #10b981;
-      margin: 24px 0;
-      padding: 20px;
-      background: #f0fdf4;
-      border-radius: 16px;
-      text-align: center;
-    }
-    .description {
-      font-size: 16px;
-      color: #4a5568;
-      margin: 24px 0;
-      line-height: 1.8;
-    }
-    .section-title {
-      font-size: 24px;
-      font-weight: 800;
-      color: #1a202c;
-      margin: 32px 0 16px 0;
-      border-bottom: 3px solid #667eea;
-      padding-bottom: 8px;
-    }
-    .features {
-      list-style: none;
-      margin: 16px 0;
-    }
-    .features li {
-      padding: 12px 16px;
-      margin: 8px 0;
-      background: #f7fafc;
-      border-left: 4px solid #667eea;
-      border-radius: 8px;
-      font-size: 14px;
-      color: #2d3748;
-      font-weight: 600;
-    }
-    .tags {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin: 16px 0;
-    }
-    .tag {
-      background: #edf2f7;
-      color: #4a5568;
-      padding: 6px 12px;
-      border-radius: 12px;
-      font-size: 12px;
-      font-weight: 600;
-    }
-    .images-section {
-      margin-top: 32px;
-    }
-    .footer {
-      margin-top: 40px;
-      padding-top: 24px;
-      border-top: 2px solid #e2e8f0;
-      text-align: center;
-      color: #718096;
-      font-size: 12px;
-    }
-    .footer a {
-      color: #667eea;
-      text-decoration: none;
-      font-weight: 700;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="category">${productContent.category}</div>
-    <h1>${productContent.title}</h1>
-    
-    <div class="price">${productContent.suggestedPrice}</div>
-    
-    <div class="description">${productContent.description}</div>
-    
-    <h2 class="section-title">${lang === 'tr' ? 'Öne Çıkan Özellikler' : 'Key Features'}</h2>
-    <ul class="features">
-      ${productContent.features.map(f => `<li>${f}</li>`).join('')}
-    </ul>
-    
-    <h2 class="section-title">${lang === 'tr' ? 'Etiketler' : 'Tags'}</h2>
-    <div class="tags">
-      ${productContent.tags.map(tag => `<span class="tag">${tag}</span>`).join('')}
-    </div>
-    
-    ${images.length > 0 ? `
-      <h2 class="section-title">${lang === 'tr' ? 'Ürün Görselleri' : 'Product Images'}</h2>
-      <div class="images-section">
-        ${imagesHTML}
-      </div>
-    ` : ''}
-    
-    <div class="footer">
-      <p>${lang === 'tr' ? 'Bu sayfa' : 'This page was created by'} <a href="https://thirdhand.com.tr" target="_blank">ThirdHand AI</a> ${lang === 'tr' ? 'tarafından oluşturulmuştur' : ''}</p>
-      <p style="margin-top: 8px; font-size: 10px;">${new Date().toLocaleDateString('tr-TR')}</p>
-    </div>
-  </div>
-</body>
-</html>
-    `;
-
-    const blob = new Blob([htmlContent], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${productContent.title.replace(/\s+/g, '_')}_listing.html`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  };
-
-
-  const exportCardAsPNG = async () => {
-    if (!productCardRef.current) return;
-    setLoading(t.preparingExport);
-    try {
-      const canvas = await html2canvas(productCardRef.current, {
-        scale: 2,
-        backgroundColor: '#ffffff',
-        logging: false,
-        useCORS: true,
-        onclone: (clonedDoc) => {
-          // Clone içindeki tüm metinleri zorla siyah yap
-          const allText = clonedDoc.querySelectorAll('*');
-          allText.forEach((el) => {
-            (el as HTMLElement).style.color = '#000000';
-            (el as HTMLElement).style.opacity = '1';
-          });
-        }
-      });
-      const url = canvas.toDataURL("image/png");
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${productContent?.title.replace(/\s+/g, '_')}_card.png`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(null);
-    }
-  };
-
-  const handleDownloadAllImages = async () => {
-    if (images.length === 0) return;
-    setLoading(t.preparingExport);
-    try {
-      const zip = new JSZip();
-      for (let i = 0; i < images.length; i++) {
-        const img = images[i];
-        const base64Data = img.url.split(',')[1];
-        zip.file(`product-image-${i + 1}.png`, base64Data, { base64: true });
+  useEffect(() => {
+    const checkKey = async () => {
+      if (window.aistudio) {
+        const hasKey = await window.aistudio.hasSelectedApiKey();
+        setApiKeySelected(hasKey as boolean);
       }
-      const content = await zip.generateAsync({ type: 'blob' });
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(content);
-      link.download = `${productContent?.title.replace(/\s+/g, '_') || 'product'}_all_images.zip`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } catch (error) {
-      console.error("ZIP error", error);
-    } finally {
-      setLoading(null);
-    }
-  };
-
-  const handleDownloadImage = (imageUrl: string, fileName: string) => {
-    const link = document.createElement('a');
-    link.href = imageUrl;
-    link.download = `${fileName}.png`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  const handleGenerateVariations = async () => {
-    if (!productContent || !imagePrompt) return;
-    setLoading(t.studioLights);
-    try {
-      const newUrl = await generateProductImage(imagePrompt, aspectRatio, imageSize);
-      setPendingGeneratedImage(newUrl);
-      setShowImagePrompt(false);
-    } catch (error) {
-      console.error("Gen error", error);
-      alert(lang === 'tr' ? "Varyasyon oluşturulamadı." : "Could not generate variation.");
-    } finally {
-      setLoading(null);
-    }
-  };
-
-  const addPendingToGallery = () => {
-    if (!pendingGeneratedImage || !productContent) return;
-    const newAsset: ImageAsset = {
-      id: Date.now().toString(),
-      url: pendingGeneratedImage,
-      type: 'generated',
-      prompt: imagePrompt,
-      altText: imageAltText || productContent.title
     };
-    setImages(prev => [...prev, newAsset]);
-    setSelectedImageIndex(images.length);
-    setPendingGeneratedImage(null);
-    setImageAltText('');
+    checkKey();
+  }, []);
+
+  const handleSelectKey = async () => {
+    if (window.aistudio) {
+      await window.aistudio.openSelectKey();
+      setApiKeySelected(true);
+    }
   };
 
-  const handleEditImage = async () => {
-    const currentImg = images[selectedImageIndex];
-    if (!currentImg || !editPrompt) return;
+  const onImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    files.forEach((file: File) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        setImageSlots(prev => [...prev, { data: ev.target?.result as string, file, id: Math.random().toString() }]);
+      };
+      reader.readAsDataURL(file);
+    });
+    e.target.value = '';
+  };
 
-    setLoading(t.pixelsProcessing);
+  const onCatalogUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    files.forEach((file: File) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        setCatalogSlots(prev => [...prev, { data: ev.target?.result as string, file, id: Math.random().toString() }]);
+      };
+      reader.readAsDataURL(file);
+    });
+    e.target.value = '';
+  };
+
+  const startDeepAnalysis = async () => {
+    if (imageSlots.length === 0) return alert("Lütfen en az bir ürün fotoğrafı yükleyin.");
+    setLoading("Ürün ve belgeler yapay zeka tarafından inceleniyor...");
     try {
-      const base64 = currentImg.url.split(',')[1];
-      const mimeType = "image/png";
-      const editedUrl = await editProductImage(base64, mimeType, editPrompt);
-
-      setImages(prev => {
-        const next = [...prev];
-        next[selectedImageIndex] = { ...currentImg, url: editedUrl };
-        return next;
-      });
-      setEditPrompt('');
-    } catch (error) {
-      console.error("Edit error", error);
-      alert(lang === 'tr' ? "Resim düzenlenemedi." : "Could not edit image.");
+      const imgs = imageSlots.map(s => ({ data: s.data.split(',')[1], mimeType: s.file.type }));
+      const cats = catalogSlots.map(s => ({ data: s.data.split(',')[1], mimeType: s.file.type }));
+      const data = await analyzeProductWithThinking(imgs, cats, 'tr', extraNote);
+      setProduct(data);
+      setImages(imageSlots.map((s, i) => ({ id: `orig-${i}`, url: s.data, type: 'original' })));
+    } catch (e: any) {
+      alert("Hata: " + e.message);
     } finally {
       setLoading(null);
     }
   };
+
+  const doImageGen = async () => {
+    setLoading("Gemini 3 Pro Image ile görsel oluşturuluyor...");
+    try {
+      const url = await generateProfessionalImage(genPrompt, genAR, genSize);
+      const newImg: ImageAsset = { id: `gen-${Date.now()}`, url, type: 'generated', prompt: genPrompt, aspectRatio: genAR, size: genSize };
+      setImages(prev => [...prev, newImg]);
+      setSelectedImgIdx(images.length);
+      setGenPrompt('');
+    } catch (e: any) {
+      alert("Hata: " + e.message);
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  const doVideoGen = async () => {
+    setLoading("Veo 3.1 ile video oluşturuluyor...");
+    try {
+      const currentImg = images[selectedImgIdx];
+      const imgData = currentImg ? { data: currentImg.url.split(',')[1], mimeType: 'image/png' } : undefined;
+      const url = await generateVeoVideo(videoPrompt, videoAR, imgData);
+      setVideos(prev => [...prev, { id: `vid-${Date.now()}`, url, type: 'veo-generation', prompt: videoPrompt }]);
+      setVideoPrompt('');
+    } catch (e: any) {
+      alert("Hata: " + e.message);
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  const downloadPDF = async () => {
+    if (!resultRef.current) return;
+    setLoading("PDF Rapor Hazırlanıyor...");
+    const canvas = await html2canvas(resultRef.current, { scale: 2 });
+    const imgData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const w = pdf.internal.pageSize.getWidth();
+    const h = (canvas.height * w) / canvas.width;
+    pdf.addImage(imgData, 'PNG', 0, 0, w, h);
+    pdf.save(`${product?.title || 'urun-analiz'}.pdf`);
+    setLoading(null);
+  };
+
+  if (apiKeySelected === false) {
+    return (
+      <div className="min-h-screen flex items-center justify-center home-gradient p-6">
+        <div className="bg-white rounded-[3rem] p-12 text-center shadow-2xl max-w-lg space-y-6">
+          <h1 className="text-4xl font-black text-slate-900">Profesyonel AI Erişimi</h1>
+          <p className="text-slate-500 font-medium italic">Bu stüdyo Veo video üretimi ve Gemini 3 Pro yeteneklerini kullanır.</p>
+          <button onClick={handleSelectKey} className="w-full bg-slate-900 text-white py-5 rounded-2xl font-black text-xl hover:bg-slate-800 transition-all shadow-xl">BAŞLAT</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="mesh-gradient min-h-screen pb-20 text-slate-100">
+    <div className={`min-h-screen transition-all duration-700 ${product ? 'bg-slate-50 text-slate-900' : 'home-gradient text-white'}`}>
       {loading && <LoadingOverlay message={loading} />}
 
-      <header className="glass-panel sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-orange-500 rounded-xl flex items-center justify-center text-white font-black text-sm italic shadow-lg shadow-emerald-500/20">AI</div>
-            <div>
-              <h1 className="text-lg font-black tracking-tight text-white leading-none">{t.appTitle}</h1>
-              <a
-                href="https://thirdhand.com.tr"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[10px] text-emerald-400 hover:text-emerald-300 font-black uppercase tracking-widest mt-0.5 block transition-colors"
-              >
-                ThirdHand AI tarafından yapılmıştır
-              </a>
-            </div>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="flex bg-white/5 border border-white/10 p-1 rounded-xl">
-              <button
-                onClick={() => setLang('tr')}
-                className={`px-3 py-1.5 rounded-lg text-[10px] font-black transition-all ${lang === 'tr' ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}
-              >
-                TR
-              </button>
-              <button
-                onClick={() => setLang('en')}
-                className={`px-3 py-1.5 rounded-lg text-[10px] font-black transition-all ${lang === 'en' ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}
-              >
-                EN
-              </button>
-            </div>
-            <div className="px-4 py-1.5 bg-white/5 border border-white/10 rounded-full text-[10px] font-black tracking-widest text-emerald-400">v2.3 REAL-AI</div>
-            {productContent && (
-              <button
-                onClick={handleResetApp}
-                className="bg-white/10 hover:bg-white/20 text-white px-5 py-2.5 rounded-2xl text-sm font-bold transition-all flex items-center gap-2 border border-white/10"
-              >
-                {t.newProduct}
-              </button>
-            )}
+      <header className={`fixed top-0 w-full z-50 px-8 py-4 flex justify-between items-center transition-all ${product ? 'bg-white/95 backdrop-blur-md border-b border-slate-200' : 'bg-transparent'}`}>
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white font-black text-xl shadow-lg animate-pulse">S</div>
+          <div>
+            <h1 className={`text-lg font-black leading-none ${product ? 'text-slate-900' : 'text-white'}`}>VİTRİN STÜDYO</h1>
+            <p className="text-[9px] font-black uppercase tracking-widest text-indigo-500">Professional Suite</p>
           </div>
         </div>
+        {product && (
+          <div className="flex gap-4">
+             <button onClick={() => { setProduct(null); setImageSlots([]); setCatalogSlots([]); }} className="bg-slate-100 text-slate-700 px-6 py-2 rounded-full font-black text-xs hover:bg-slate-200 transition-all">YENİ ÜRÜN</button>
+             <button onClick={downloadPDF} className="bg-indigo-600 text-white px-6 py-2 rounded-full font-black text-xs shadow-md hover:bg-indigo-700 transition-all">PDF RAPOR</button>
+          </div>
+        )}
       </header>
 
-      <main className="max-w-7xl mx-auto px-6 py-10">
-        {!productContent ? (
-          <div className="flex flex-col items-center justify-center min-h-[75vh] text-center space-y-12 animate-in fade-in zoom-in-95 duration-700">
-            <div className="space-y-4">
-              <h2 className="text-5xl lg:text-7xl font-[1000] leading-none tracking-tighter text-white">
-                {t.heroTitle.split(' ').slice(0, 2).join(' ')}<br />
-                <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-white to-orange-500">
-                  {t.heroTitle.split(' ').slice(2).join(' ')}
-                </span>
-              </h2>
-              <p className="text-slate-400 max-w-xl mx-auto text-lg font-medium leading-relaxed">
-                {t.heroDesc}
-              </p>
+      <main className="pt-24 px-8 max-w-7xl mx-auto pb-24">
+        {!product ? (
+          <div className="max-w-4xl mx-auto py-10 space-y-16">
+            <div className="text-center space-y-6">
+              <h2 className="text-7xl font-black tracking-tighter leading-none">E-Ticaret <br/><span className="text-indigo-500 underline underline-offset-8 decoration-indigo-600/30">Ürün Hazırlama</span> Merkezi</h2>
+              <p className="text-xl text-white/60 font-medium">Fotoğrafları yükleyin, katalogları ekleyin; biz profesyonel vitrininizi kuralım.</p>
             </div>
 
-            {/* Ürün Bilgileri Girişi */}
-            <div className="w-full max-w-4xl space-y-6">
-              <div className="glass-card-light p-8 rounded-[3rem] shadow-2xl space-y-4">
-                <div>
-                  <label className="block text-sm font-bold text-navy mb-2">
-                    Ürün Adı (Opsiyonel)
-                  </label>
-                  <input
-                    type="text"
-                    value={inputProductName}
-                    onChange={(e) => setInputProductName(e.target.value)}
-                    placeholder="Örn: Premium Deri Çanta"
-                    className="w-full px-6 py-4 rounded-2xl border-2 border-slate-200 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100 outline-none transition-all text-navy font-bold bg-white"
-                  />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              {/* Image Upload */}
+              <div className="glass-card rounded-[3rem] p-10 space-y-6 flex flex-col h-full border-indigo-500/20 shadow-2xl relative group">
+                <div className="flex items-center gap-3 mb-2">
+                   <span className="material-symbols-outlined text-indigo-400">add_a_photo</span>
+                   <h3 className="text-lg font-black tracking-tight uppercase">Ürün Fotoğrafları</h3>
                 </div>
-
-                <div>
-                  <label className="block text-sm font-bold text-navy mb-2">
-                    Ürün Açıklaması / Ek Bilgiler (Opsiyonel)
-                  </label>
-                  <textarea
-                    value={inputDescription}
-                    onChange={(e) => setInputDescription(e.target.value)}
-                    placeholder="Ürün hakkında ek bilgiler, özellikler veya notlar ekleyin..."
-                    rows={4}
-                    className="w-full px-6 py-4 rounded-2xl border-2 border-slate-200 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100 outline-none transition-all text-navy font-bold resize-none bg-white"
-                  />
-                </div>
-              </div>
-
-              {/* Teknik Belge Yükleme */}
-              <div className="glass-card-light p-8 rounded-[3rem] shadow-2xl space-y-4">
-                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  Teknik Belgeler (Opsiyonel) - PDF, Word, Excel vb.
-                </label>
-                <div className="flex flex-wrap gap-3">
-                  {techDocSlots.map((doc) => (
-                    <div key={doc.id} className="relative group">
-                      <div className="px-4 py-2 bg-slate-50 rounded-xl border-2 border-slate-200 flex items-center gap-2">
-                        <span className="material-symbols-outlined text-emerald-600 text-sm">description</span>
-                        <span className="text-xs font-bold text-navy max-w-[150px] truncate">
-                          {doc.file.name}
-                        </span>
-                        <button
-                          onClick={() => clearTechDoc(doc.id)}
-                          className="ml-2 text-red-600 hover:bg-red-100 rounded-full p-1 transition-colors"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                  {techDocSlots.length < MAX_TECH_DOC_SLOTS && (
-                    <button
-                      onClick={() => techDocInputRef.current?.click()}
-                      className="px-6 py-2 border-2 border-dashed border-slate-300 rounded-xl hover:border-emerald-500 hover:bg-emerald-50 transition-all flex items-center gap-2 group bg-white"
-                    >
-                      <span className="material-symbols-outlined text-slate-400 group-hover:text-emerald-600 text-sm">add</span>
-                      <span className="text-xs font-bold text-slate-600 group-hover:text-emerald-600">
-                        Belge Ekle ({techDocSlots.length}/{MAX_TECH_DOC_SLOTS})
-                      </span>
-                    </button>
-                  )}
-                  <input
-                    type="file"
-                    ref={techDocInputRef}
-                    onChange={handleTechDocUpload}
-                    className="hidden"
-                    accept=".pdf,.doc,.docx,.xls,.xlsx,.txt"
-                    multiple
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6 w-full max-w-6xl">
-              {uploadSlots.map((slot) => (
-                <div key={slot.id} className="relative aspect-square">
-                  <div className="w-full h-full rounded-[2rem] overflow-hidden border-4 border-white group relative shadow-xl transition-transform hover:scale-[1.02]">
-                    <img src={slot.dataUrl} className="w-full h-full object-cover" />
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                      <button
-                        onClick={() => clearSlot(slot.id)}
-                        className="bg-white text-red-600 p-2.5 rounded-xl shadow-xl hover:scale-110 active:scale-95 transition-all"
-                      >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-              {uploadSlots.length < MAX_UPLOAD_SLOTS && (
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="aspect-square w-full border-4 border-dashed border-slate-300 rounded-[2rem] flex flex-col items-center justify-center gap-2 hover:border-orange-500 hover:bg-white/10 transition-all group bg-white/5"
+                <div 
+                  onClick={() => imageInputRef.current?.click()}
+                  className="flex-grow border-4 border-dashed border-white/10 rounded-[2rem] p-10 text-center cursor-pointer hover:border-indigo-500 hover:bg-indigo-500/5 transition-all flex flex-col items-center justify-center min-h-[250px]"
                 >
-                  <svg className="w-10 h-10 text-slate-400 group-hover:text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4" />
-                  </svg>
-                  <span className="text-[10px] font-black text-slate-300 group-hover:text-white uppercase tracking-widest">
-                    Resim Ekle ({uploadSlots.length}/{MAX_UPLOAD_SLOTS})
-                  </span>
-                </button>
-              )}
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileUpload}
-                className="hidden"
-                accept="image/*"
-                multiple
-              />
+                  <input type="file" ref={imageInputRef} multiple className="hidden" onChange={onImageUpload} accept="image/*" />
+                  <span className="material-symbols-outlined text-5xl text-indigo-400/50 mb-4 group-hover:scale-110 transition-transform">upload</span>
+                  <p className="text-sm font-bold opacity-60 uppercase tracking-widest">En az 1 adet ürün görseli yükleyin</p>
+                </div>
+                {imageSlots.length > 0 && (
+                  <div className="flex flex-wrap gap-2 pt-4">
+                    {imageSlots.map((s) => (
+                      <div key={s.id} className="relative group/thumb">
+                        <img src={s.data} className="w-14 h-14 object-cover rounded-lg border border-white/20" />
+                        <button onClick={() => setImageSlots(p => p.filter(i => i.id !== s.id))} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-[10px] opacity-0 group-hover/thumb:opacity-100 transition-opacity">✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Catalog Upload */}
+              <div className="glass-card rounded-[3rem] p-10 space-y-6 flex flex-col h-full border-emerald-500/20 shadow-2xl relative group">
+                <div className="flex items-center gap-3 mb-2">
+                   <span className="material-symbols-outlined text-emerald-400">description</span>
+                   <h3 className="text-lg font-black tracking-tight uppercase">Teknik Katalog / Belgeler</h3>
+                </div>
+                <div 
+                  onClick={() => catalogInputRef.current?.click()}
+                  className="flex-grow border-4 border-dashed border-white/10 rounded-[2rem] p-10 text-center cursor-pointer hover:border-emerald-500 hover:bg-emerald-500/5 transition-all flex flex-col items-center justify-center min-h-[250px]"
+                >
+                  <input type="file" ref={catalogInputRef} multiple className="hidden" onChange={onCatalogUpload} accept="image/*,application/pdf" />
+                  <span className="material-symbols-outlined text-5xl text-emerald-400/50 mb-4 group-hover:scale-110 transition-transform">sticky_note_2</span>
+                  <p className="text-sm font-bold opacity-60 uppercase tracking-widest">Katalog, broşür veya teknik şema yükleyin</p>
+                </div>
+                {catalogSlots.length > 0 && (
+                  <div className="flex flex-wrap gap-2 pt-4">
+                    {catalogSlots.map((s) => (
+                      <div key={s.id} className="relative group/thumb flex items-center justify-center w-14 h-14 bg-emerald-500/10 border border-emerald-500/30 rounded-lg">
+                        <span className="material-symbols-outlined text-emerald-400 text-xl">docs</span>
+                        <button onClick={() => setCatalogSlots(p => p.filter(i => i.id !== s.id))} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-[10px] opacity-0 group-hover/thumb:opacity-100 transition-opacity">✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div className="pt-4">
-              <button
-                onClick={triggerAnalysis}
-                className="group relative bg-navy text-white px-14 py-6 rounded-full font-black text-xl shadow-2xl hover:bg-slate-800 hover:-translate-y-1 active:translate-y-0 transition-all flex items-center gap-4 disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden"
-                disabled={uploadSlots.length === 0}
+            <div className="glass-card rounded-[3rem] p-10 space-y-6">
+              <label className="text-xs font-black text-white/40 uppercase tracking-[0.3em] px-4 block">Ek Bilgiler & Yapay Zeka Komutları</label>
+              <textarea 
+                value={extraNote} 
+                onChange={(e) => setExtraNote(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded-[2rem] p-8 h-40 focus:border-indigo-500 outline-none transition-all placeholder:text-white/20 font-medium"
+                placeholder="Örn: Barkod: 868000..., Ürünün 'el yapımı' olduğu vurgulansın, rakiplerden %10 daha ucuz listelensin..."
+              />
+              <button 
+                onClick={startDeepAnalysis}
+                disabled={imageSlots.length === 0}
+                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-black py-8 rounded-[2rem] text-3xl shadow-[0_20px_60px_-15px_rgba(79,70,229,0.5)] transition-all flex items-center justify-center gap-6 disabled:opacity-30 disabled:grayscale"
               >
-                <div className="absolute inset-0 bg-gradient-to-r from-emerald-500 to-orange-500 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                <span className="relative z-10">{t.startAnalysis}</span>
-                <span className="material-symbols-outlined text-emerald-400 relative z-10">auto_fix_high</span>
+                <span>PROFESYONEL ANALİZİ BAŞLAT</span>
+                <span className="material-symbols-outlined text-4xl">magic_exchange</span>
               </button>
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 animate-in slide-in-from-bottom-8 duration-1000">
-            <div className="space-y-10">
-              <div className="glass-card p-4 rounded-[3rem] shadow-2xl relative group overflow-hidden">
-                <div className="aspect-square rounded-[2.5rem] overflow-hidden bg-white/40 border border-white/50 relative">
-                  {images[selectedImageIndex] && (
-                    <img src={images[selectedImageIndex].url} alt={images[selectedImageIndex].altText} className="w-full h-full object-contain p-6" />
-                  )}
-                  {pendingGeneratedImage && (
-                    <div className="absolute inset-0 bg-white/90 z-30 flex flex-col items-center justify-center p-8 animate-in fade-in zoom-in-95 duration-500">
-                      <p className="text-black font-black uppercase text-xs mb-4">Yeni Görsel Önizleme</p>
-                      <img src={pendingGeneratedImage} className="max-w-[80%] max-h-[70%] rounded-2xl shadow-2xl border-4 border-white mb-6" />
-                      <div className="flex gap-4">
-                        <button onClick={() => setPendingGeneratedImage(null)} className="px-6 py-3 text-black font-black text-sm uppercase">{t.cancel}</button>
-                        <button
-                          onClick={addPendingToGallery}
-                          className="bg-black text-white px-8 py-3 rounded-full font-black flex items-center gap-2 shadow-xl hover:scale-105 transition-transform"
-                        >
-                          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M12 4v16m8-8H4" /></svg>
-                          Galeriye Ekle
-                        </button>
-                      </div>
-                    </div>
-                  )}
+          <div ref={resultRef} className="grid grid-cols-1 lg:grid-cols-12 gap-12 animate-in fade-in duration-700">
+            {/* Sidebar / Stats */}
+            <div className="lg:col-span-4 space-y-8">
+              <div className="bg-white rounded-[3.5rem] p-10 shadow-[0_40px_100px_-40px_rgba(0,0,0,0.1)] border border-slate-200">
+                <div className="aspect-[4/5] bg-slate-50 rounded-[2rem] overflow-hidden mb-8 relative group cursor-zoom-in">
+                  <img src={images[selectedImgIdx]?.url} className="w-full h-full object-contain p-6 transition-transform duration-700 group-hover:scale-105" />
+                  <div className="absolute top-4 right-4 bg-white/95 px-4 py-2 rounded-full text-[10px] font-black uppercase shadow-sm border border-slate-100">
+                    {images[selectedImgIdx]?.type === 'original' ? 'Asıl Görsel' : 'Yapay Zeka'}
+                  </div>
+                </div>
+                <div className="grid grid-cols-4 gap-3">
+                  {images.map((img, idx) => (
+                    <button key={img.id} onClick={() => setSelectedImgIdx(idx)} className={`aspect-square rounded-2xl border-2 overflow-hidden transition-all ${selectedImgIdx === idx ? 'border-indigo-600 scale-105 shadow-lg' : 'border-slate-100 opacity-60 hover:opacity-100'}`}>
+                      <img src={img.url} className="w-full h-full object-cover" />
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              <div className="space-y-6">
-                <div className="flex gap-5 overflow-x-auto pb-4 scrollbar-hide px-2">
-                  {images.map((img, idx) => (
-                    <div key={img.id} className="relative shrink-0 group/thumb">
-                      <button
-                        onClick={() => setSelectedImageIndex(idx)}
-                        className={`w-28 h-28 rounded-3xl overflow-hidden border-4 transition-all ${selectedImageIndex === idx ? 'border-blue-500 scale-110 shadow-lg' : 'border-white'}`}
-                      >
-                        <img src={img.url} className="w-full h-full object-cover" />
-                      </button>
-                      <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover/thumb:opacity-100 transition-opacity z-20">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); deleteThumbnail(idx); }}
-                          className="bg-white text-red-600 p-1.5 rounded-lg shadow-lg border border-red-50 hover:bg-red-50"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M6 18L18 6M6 6l12 12" /></svg>
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleDownloadImage(img.url, `ai-img-${idx}`); }}
-                          className="bg-white text-blue-600 p-1.5 rounded-lg shadow-lg border border-blue-50 hover:bg-blue-50"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                        </button>
+              <div className="bg-white rounded-[3.5rem] p-10 shadow-sm border border-slate-200 space-y-8">
+                <div className="flex items-center gap-3">
+                   <span className="material-symbols-outlined text-indigo-600">settings_suggest</span>
+                   <h3 className="font-black uppercase text-xs tracking-[0.2em] text-slate-400">Teknik Özet</h3>
+                </div>
+                <div className="grid grid-cols-1 gap-6">
+                  <div className="flex justify-between items-end border-b border-slate-100 pb-2">
+                    <span className="text-[10px] font-black uppercase text-slate-400">Marka</span>
+                    <p className="font-black text-sm">{product.brand}</p>
+                  </div>
+                  <div className="flex justify-between items-end border-b border-slate-100 pb-2">
+                    <span className="text-[10px] font-black uppercase text-slate-400">Barkod</span>
+                    <p className="font-black text-sm">{product.barcode}</p>
+                  </div>
+                  <div className="flex justify-between items-end border-b border-slate-100 pb-2">
+                    <span className="text-[10px] font-black uppercase text-slate-400">Ürün Kodu</span>
+                    <p className="font-black text-sm">{product.productCode}</p>
+                  </div>
+                  <div className="flex justify-between items-end border-b border-slate-100 pb-2">
+                    <span className="text-[10px] font-black uppercase text-slate-400">Ağırlık</span>
+                    <p className="font-black text-sm">{product.weight}</p>
+                  </div>
+                  <div className="flex justify-between items-end border-b border-slate-100 pb-2">
+                    <span className="text-[10px] font-black uppercase text-slate-400">Ebatlar</span>
+                    <p className="font-black text-[11px]">{product.productDimensions}</p>
+                  </div>
+                </div>
+              </div>
+
+              {product.marketTrends && (
+                <div className="bg-indigo-600 rounded-[3.5rem] p-10 text-white shadow-xl shadow-indigo-200">
+                  <h3 className="font-black uppercase text-xs tracking-[0.2em] text-white/50 mb-6">Pazar Analizi</h3>
+                  <ul className="space-y-4">
+                    {product.marketTrends.map((t, i) => (
+                      <li key={i} className="flex gap-3 text-sm font-bold leading-tight">
+                        <span className="text-white/30 shrink-0 mt-1">✦</span> {t}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {product.groundingUrls && product.groundingUrls.length > 0 && (
+                <div className="bg-slate-100 rounded-[3rem] p-10 border border-slate-200">
+                  <h3 className="font-black uppercase text-xs tracking-widest text-slate-500 mb-6">İnternet Kaynakları</h3>
+                  <div className="space-y-3">
+                    {product.groundingUrls.map((url, i) => (
+                      <a key={i} href={url.uri} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-[10px] font-black text-indigo-600 hover:underline">
+                        <span className="material-symbols-outlined text-sm">link</span>
+                        <span className="truncate">{url.title || 'Kaynak'}</span>
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Content Area */}
+            <div className="lg:col-span-8 space-y-8">
+              <nav className="flex gap-4 p-2 bg-slate-200/50 rounded-[2rem] w-fit shadow-inner">
+                {[
+                  { id: 'content', label: 'ÜRÜN SAYFASI', icon: 'storefront' },
+                  { id: 'visuals', label: 'GÖRSEL STÜDYO', icon: 'camera' },
+                  { id: 'video', label: 'VEO VİDEO', icon: 'movie' }
+                ].map(t => (
+                  <button 
+                    key={t.id} 
+                    onClick={() => setActiveTab(t.id as any)}
+                    className={`px-8 py-4 rounded-[1.5rem] flex items-center gap-3 font-black text-xs tracking-widest transition-all ${activeTab === t.id ? 'bg-white text-indigo-600 shadow-xl' : 'text-slate-500 hover:text-slate-800'}`}
+                  >
+                    <span className="material-symbols-outlined text-xl">{t.icon}</span>
+                    {t.label}
+                  </button>
+                ))}
+              </nav>
+
+              <div className="min-h-[800px]">
+                {activeTab === 'content' && (
+                  <div className="space-y-10 animate-in fade-in slide-in-from-bottom-8 duration-700">
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-3">
+                        <span className="bg-emerald-100 text-emerald-700 px-4 py-1.5 rounded-full text-[10px] font-black tracking-widest uppercase shadow-sm">STOCK: ACTIVE</span>
+                        <span className="bg-slate-100 text-slate-600 px-4 py-1.5 rounded-full text-[10px] font-black tracking-widest uppercase border border-slate-200">{product.category}</span>
+                      </div>
+                      <h2 className="text-6xl font-black leading-[1.1] tracking-tighter text-slate-900">{product.title}</h2>
+                      <div className="flex items-baseline gap-4 pt-4">
+                        <span className="text-7xl font-black text-slate-900 tracking-tighter">{product.suggestedPrice}</span>
+                        <span className="text-3xl font-black text-slate-400">TRY</span>
+                        <span className="ml-4 text-xs font-bold text-emerald-600 bg-emerald-50 px-4 py-2 rounded-xl">Gemini Pazar Analizi Uyumlu</span>
                       </div>
                     </div>
-                  ))}
-                  <button
-                    onClick={() => setShowImagePrompt(!showImagePrompt)}
-                    className={`w-28 h-28 rounded-3xl border-4 border-dashed shrink-0 flex items-center justify-center transition-all bg-white/50 hover:bg-blue-50/50 ${showImagePrompt ? 'border-blue-500 text-blue-600' : 'border-slate-400 text-black'}`}
-                  >
-                    <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
-                  </button>
-                </div>
 
-                <div className="flex gap-4">
-                  {images.length > 0 && (
-                    <button
-                      onClick={handleDownloadAllImages}
-                      className="flex items-center gap-2 text-[10px] font-black text-black bg-white/50 hover:bg-white px-4 py-2 rounded-xl border border-white transition-all shadow-sm"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                      {t.downloadAll}
-                    </button>
-                  )}
-                </div>
+                    <div className="bg-white p-14 rounded-[4rem] shadow-sm border border-slate-200 relative overflow-hidden">
+                      <div className="absolute top-0 left-0 w-2 h-full bg-indigo-600"></div>
+                      <h3 className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-400 mb-8">ÜRÜN HİKAYESİ & TANITIM</h3>
+                      <p className="text-2xl font-medium leading-relaxed text-slate-700 italic">"{product.description}"</p>
+                    </div>
 
-                {showImagePrompt && (
-                  <div className="glass-card p-8 rounded-[2.5rem] space-y-5 shadow-xl border border-blue-100">
-                    <h4 className="font-black text-black text-xl">{t.imagePromptLabel}</h4>
-                    <textarea
-                      placeholder={t.imagePromptPlaceholder}
-                      className="w-full bg-white border border-slate-300 rounded-3xl px-6 py-5 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/20 text-black"
-                      rows={3}
-                      value={imagePrompt}
-                      onChange={(e) => setImagePrompt(e.target.value)}
-                    />
-                    <input
-                      type="text"
-                      placeholder={t.imageAltPlaceholder}
-                      className="w-full bg-white border border-slate-300 rounded-2xl px-6 py-4 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/20 text-black"
-                      value={imageAltText}
-                      onChange={(e) => setImageAltText(e.target.value)}
-                    />
-                    <div className="flex justify-end gap-3">
-                      <button onClick={() => setShowImagePrompt(false)} className="px-8 py-3 text-sm font-black text-black">{t.cancel}</button>
-                      <button onClick={handleGenerateVariations} className="bg-blue-600 text-white px-10 py-3 rounded-full text-sm font-black shadow-lg shadow-blue-500/20">{t.startProduction}</button>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                      <div className="bg-white p-12 rounded-[4rem] shadow-sm border border-slate-200">
+                        <h3 className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-400 mb-8">TEMEL ÖZELLİKLER</h3>
+                        <ul className="space-y-6">
+                          {product.features.map((f, i) => (
+                            <li key={i} className="flex gap-4 text-lg font-black items-start group">
+                              <span className="w-8 h-8 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center text-xs mt-0.5 shrink-0 group-hover:bg-indigo-600 group-hover:text-white transition-all">✓</span>
+                              <span className="text-slate-800">{f}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div className="bg-white p-12 rounded-[4rem] shadow-sm border border-slate-200">
+                        <h3 className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-400 mb-8">SEO & PAZARLAMA</h3>
+                        <div className="flex flex-wrap gap-3">
+                          {product.tags.map((t, i) => (
+                            <span key={i} className="bg-slate-50 border border-slate-100 px-6 py-3 rounded-2xl text-[11px] font-black text-slate-600 hover:border-indigo-400 hover:text-indigo-600 cursor-pointer transition-all shadow-sm">#{t.toUpperCase()}</span>
+                          ))}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )}
 
-                <div className="glass-card p-8 rounded-[2.5rem] space-y-6 shadow-xl">
-                  <span className="text-[11px] font-[900] text-black uppercase tracking-[0.2em]">{t.quickEdit}</span>
-                  <div className="flex gap-4">
-                    <input
-                      type="text"
-                      placeholder={t.editPlaceholder}
-                      className="flex-1 bg-white border border-slate-300 rounded-2xl px-6 py-4 text-sm font-bold outline-none focus:ring-2 focus:ring-slate-900/10 text-black"
-                      value={editPrompt}
-                      onChange={(e) => setEditPrompt(e.target.value)}
-                    />
-                    <button onClick={handleEditImage} className="bg-black text-white px-10 py-4 rounded-2xl text-sm font-black shadow-lg hover:bg-slate-800 transition-colors">{t.apply}</button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-8">
-              <div
-                ref={productCardRef}
-                className="glass-card p-12 rounded-[3.5rem] shadow-2xl space-y-10 sticky top-28 border border-white text-black"
-                style={{ color: '#000000', backgroundColor: '#ffffff' }}
-              >
-                <div className="flex justify-between items-start">
-                  <div className="space-y-4 flex-1">
-                    {isEditMode && editableContent ? (
-                      <>
-                        <input
-                          type="text"
-                          value={editableContent.category}
-                          onChange={(e) => updateEditableField('category', e.target.value)}
-                          className="inline-block bg-blue-600 text-white text-[10px] font-black px-4 py-1.5 rounded-full uppercase shadow-lg shadow-blue-500/20 border-2 border-blue-700 outline-none"
-                        />
-                        <input
-                          type="text"
-                          value={editableContent.title}
-                          onChange={(e) => updateEditableField('title', e.target.value)}
-                          className="block w-full text-4xl font-[900] text-black tracking-tight leading-tight bg-transparent border-2 border-slate-300 rounded-2xl px-4 py-2 outline-none focus:border-blue-500"
-                        />
-                      </>
-                    ) : (
-                      <>
-                        <span className="inline-block bg-blue-600 text-white text-[10px] font-black px-4 py-1.5 rounded-full uppercase shadow-lg shadow-blue-500/20">{productContent.category}</span>
-                        <h2 className="text-4xl font-[900] text-black tracking-tight leading-tight">{productContent.title}</h2>
-                      </>
-                    )}
-                  </div>
-                  <div className="flex gap-2">
-                    {isEditMode ? (
-                      <>
-                        <button onClick={saveEdits} className="p-3 bg-green-600 text-white rounded-2xl shadow-sm hover:bg-green-700 transition-colors" title="Kaydet">
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" /></svg>
-                        </button>
-                        <button onClick={cancelEdits} className="p-3 bg-red-600 text-white rounded-2xl shadow-sm hover:bg-red-700 transition-colors" title="İptal">
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
-                        </button>
-                      </>
-                    ) : (
-                      <button onClick={toggleEditMode} className="p-3 bg-blue-600 text-white rounded-2xl shadow-sm hover:bg-blue-700 transition-colors" title="Düzenle">
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-                      </button>
-                    )}
-                    <button onClick={handleCopyContent} className="p-3 bg-white border border-slate-100 rounded-2xl text-black shadow-sm hover:bg-slate-50 transition-colors"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg></button>
-                    <div className="relative group/export">
-                      <button className="p-3 bg-white border border-slate-100 rounded-2xl text-black shadow-sm hover:bg-slate-50 transition-colors"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg></button>
-                      <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-2xl shadow-2xl opacity-0 invisible group-hover/export:opacity-100 group-hover/export:visible transition-all p-2 space-y-1 z-50 border border-slate-100">
-                        <button onClick={exportPDF} className="w-full text-left px-4 py-2 text-xs font-black hover:bg-slate-50 rounded-lg text-black">{t.exportPdf}</button>
-                        <button onClick={exportAsHTML} className="w-full text-left px-4 py-2 text-xs font-black hover:bg-slate-50 rounded-lg text-black">{t.exportHtml}</button>
-                        <button onClick={exportCardAsPNG} className="w-full text-left px-4 py-2 text-xs font-black hover:bg-slate-50 rounded-lg text-black">{t.exportPng}</button>
+                {activeTab === 'visuals' && (
+                  <div className="space-y-10 animate-in fade-in slide-in-from-bottom-8 duration-700">
+                    <div className="bg-white p-14 rounded-[4rem] shadow-2xl border border-slate-200 space-y-10">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white">
+                          <span className="material-symbols-outlined text-2xl">auto_fix</span>
+                        </div>
+                        <h2 className="text-3xl font-black tracking-tight">AI Görsel Stüdyosu <br/><span className="text-indigo-500 text-sm font-black uppercase tracking-widest">Gemini 3 Pro Powered</span></h2>
                       </div>
-                    </div>
-                  </div>
-                </div>
+                      
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest px-2">Kadro (En-Boy)</label>
+                          <select value={genAR} onChange={(e) => setGenAR(e.target.value as any)} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-6 py-4 font-black text-sm outline-none focus:border-indigo-600 transition-all appearance-none cursor-pointer">
+                            {['1:1', '2:3', '3:2', '3:4', '4:3', '9:16', '16:9', '21:9'].map(ar => <option key={ar} value={ar}>{ar}</option>)}
+                          </select>
+                        </div>
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest px-2">Çözünürlük</label>
+                          <select value={genSize} onChange={(e) => setGenSize(e.target.value as any)} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-6 py-4 font-black text-sm outline-none focus:border-indigo-600 transition-all appearance-none cursor-pointer">
+                            {['1K', '2K', '4K'].map(q => <option key={q} value={q}>{q}</option>)}
+                          </select>
+                        </div>
+                      </div>
 
-                <div className="bg-blue-50/50 p-6 rounded-3xl border border-blue-100 flex items-center justify-between shadow-inner">
-                  {isEditMode && editableContent ? (
-                    <input
-                      type="text"
-                      value={editableContent.suggestedPrice}
-                      onChange={(e) => updateEditableField('suggestedPrice', e.target.value)}
-                      className="text-3xl font-[900] text-blue-600 bg-transparent border-2 border-blue-300 rounded-xl px-4 py-2 outline-none focus:border-blue-500 flex-1"
-                    />
-                  ) : (
-                    <div className="text-3xl font-[900] text-blue-600">{productContent.suggestedPrice}</div>
-                  )}
-                  <div className="text-right">
-                    <p className="text-[10px] font-black text-blue-900 uppercase">{t.suggestedPrice}</p>
-                    <p className="text-xs font-black text-black italic">{t.marketAverage}</p>
-                  </div>
-                </div>
-
-                <div className="space-y-4">
-                  <h3 className="text-xs font-black text-black uppercase tracking-widest flex items-center gap-2"><span className="w-6 h-0.5 bg-black"></span>{t.productStory}</h3>
-                  {isEditMode && editableContent ? (
-                    <textarea
-                      value={editableContent.description}
-                      onChange={(e) => updateEditableField('description', e.target.value)}
-                      rows={6}
-                      className="w-full text-black leading-[1.7] text-lg font-black bg-transparent border-2 border-slate-300 rounded-2xl px-4 py-3 outline-none focus:border-blue-500 resize-none"
-                    />
-                  ) : (
-                    <p className="text-black leading-[1.7] text-lg font-black">{productContent.description}</p>
-                  )}
-                </div>
-
-                <div className="space-y-6">
-                  <h3 className="text-xs font-black text-black uppercase tracking-widest flex items-center gap-2"><span className="w-6 h-0.5 bg-black"></span>{t.topFeatures}</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {isEditMode && editableContent ? (
-                      editableContent.features.map((f, i) => (
-                        <div key={i} className="flex gap-2 items-center">
-                          <input
-                            type="text"
-                            value={f}
-                            onChange={(e) => {
-                              const newFeatures = [...editableContent.features];
-                              newFeatures[i] = e.target.value;
-                              updateEditableField('features', newFeatures);
-                            }}
-                            className="flex-1 text-sm font-bold text-black bg-white/60 p-5 rounded-3xl border-2 border-slate-300 outline-none focus:border-blue-500"
+                      <div className="space-y-4">
+                         <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest px-2">Sahne Komutu</label>
+                         <div className="flex gap-4">
+                          <input 
+                            value={genPrompt} 
+                            onChange={e => setGenPrompt(e.target.value)}
+                            className="flex-grow bg-slate-50 border border-slate-200 rounded-[2rem] px-8 py-6 font-black outline-none focus:border-indigo-600 transition-all shadow-inner text-lg"
+                            placeholder="Ürünü nerede hayal ediyorsunuz?"
                           />
-                          <button
-                            onClick={() => {
-                              const newFeatures = editableContent.features.filter((_, idx) => idx !== i);
-                              updateEditableField('features', newFeatures);
-                            }}
-                            className="p-2 text-red-600 hover:bg-red-100 rounded-full transition-colors"
-                          >
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                          <button onClick={doImageGen} disabled={!genPrompt} className="bg-indigo-600 text-white px-12 rounded-[2rem] font-black shadow-xl shadow-indigo-200 hover:bg-indigo-500 transition-all disabled:opacity-30 flex items-center gap-3">
+                             ÜRET <span className="material-symbols-outlined">bolt</span>
                           </button>
                         </div>
-                      ))
-                    ) : (
-                      productContent.features.map((f, i) => (
-                        <div key={i} className="flex gap-4 text-sm font-bold text-black bg-white/60 p-5 rounded-3xl border border-white shadow-sm">{f}</div>
-                      ))
-                    )}
-                  </div>
-                  {isEditMode && editableContent && (
-                    <button
-                      onClick={() => {
-                        const newFeatures = [...editableContent.features, 'Yeni özellik'];
-                        updateEditableField('features', newFeatures);
-                      }}
-                      className="w-full py-3 border-2 border-dashed border-slate-400 rounded-2xl hover:border-blue-500 hover:bg-blue-50 transition-all flex items-center justify-center gap-2 group"
-                    >
-                      <svg className="w-5 h-5 text-slate-600 group-hover:text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg>
-                      <span className="text-sm font-bold text-slate-600 group-hover:text-blue-600">Özellik Ekle</span>
-                    </button>
-                  )}
-                </div>
+                      </div>
+                    </div>
 
-                {/* Etiketler Bölümü */}
-                <div className="space-y-4">
-                  <h3 className="text-xs font-black text-black uppercase tracking-widest flex items-center gap-2"><span className="w-6 h-0.5 bg-black"></span>Etiketler</h3>
-                  <div className="flex flex-wrap gap-2">
-                    {isEditMode && editableContent ? (
-                      <>
-                        {editableContent.tags.map((tag, i) => (
-                          <div key={i} className="flex items-center gap-1 bg-slate-100 px-3 py-1.5 rounded-full border-2 border-slate-300">
-                            <input
-                              type="text"
-                              value={tag}
-                              onChange={(e) => {
-                                const newTags = [...editableContent.tags];
-                                newTags[i] = e.target.value;
-                                updateEditableField('tags', newTags);
-                              }}
-                              className="bg-transparent text-xs font-bold text-slate-700 outline-none w-24"
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                      {images.filter(i => i.type === 'generated').map(img => (
+                        <div key={img.id} className="bg-white rounded-[3.5rem] p-8 shadow-sm border border-slate-200 space-y-6 group hover:shadow-2xl transition-all duration-500">
+                          <div className="aspect-square bg-slate-50 rounded-[2.5rem] overflow-hidden relative">
+                             <img src={img.url} className="w-full h-full object-contain p-4 group-hover:scale-105 transition-transform duration-700" />
+                             <div className="absolute bottom-4 left-4 bg-black/60 backdrop-blur-md text-white text-[9px] font-black px-4 py-2 rounded-full uppercase tracking-widest shadow-xl">{img.size} • {img.aspectRatio}</div>
+                          </div>
+                          <div className="px-2">
+                             <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-1">KOMUT</p>
+                             <p className="text-sm font-bold text-slate-700 italic">"{img.prompt}"</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {activeTab === 'video' && (
+                  <div className="space-y-10 animate-in fade-in slide-in-from-bottom-8 duration-700">
+                    <div className="bg-slate-900 text-white p-14 rounded-[4rem] shadow-2xl space-y-10 relative overflow-hidden border border-white/5">
+                      <div className="absolute -top-20 -right-20 w-80 h-80 bg-indigo-600/20 blur-[100px] rounded-full"></div>
+                      <div className="relative z-10 space-y-10">
+                        <div className="flex items-center gap-4">
+                           <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center text-white border border-white/20">
+                             <span className="material-symbols-outlined text-2xl">movie</span>
+                           </div>
+                           <h2 className="text-3xl font-black tracking-tight">Veo 3.1 Sinematik Reklam Stüdyosu</h2>
+                        </div>
+                        
+                        <div className="flex gap-4">
+                          {['16:9', '9:16'].map(ar => (
+                            <button key={ar} onClick={() => setVideoAR(ar as any)} className={`px-10 py-5 rounded-[1.5rem] font-black text-xs tracking-[0.2em] border-2 transition-all ${videoAR === ar ? 'bg-white text-slate-900 border-white shadow-xl scale-105' : 'border-white/10 text-white/40 hover:border-white/20'}`}>{ar === '16:9' ? 'YATAY REKLAM' : 'DIKEY REELS'}</button>
+                          ))}
+                        </div>
+
+                        <div className="space-y-4">
+                          <label className="text-[10px] font-black uppercase text-white/40 tracking-[0.4em] px-4">Senaryo Komutu</label>
+                          <div className="flex gap-4">
+                            <input 
+                              value={videoPrompt} 
+                              onChange={e => setVideoPrompt(e.target.value)}
+                              className="flex-grow bg-white/5 border border-white/10 rounded-[2rem] px-8 py-6 font-bold outline-none focus:border-indigo-400 transition-all text-white shadow-inner text-lg"
+                              placeholder="Ürün videoda nasıl hareket etmeli? (Örn: Sinematik ışıklar altında yavaş dönüş)"
                             />
-                            <button
-                              onClick={() => {
-                                const newTags = editableContent.tags.filter((_, idx) => idx !== i);
-                                updateEditableField('tags', newTags);
-                              }}
-                              className="text-red-600 hover:bg-red-100 rounded-full p-0.5"
-                            >
-                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                            <button onClick={doVideoGen} disabled={!videoPrompt} className="bg-indigo-600 text-white px-12 rounded-[2rem] font-black shadow-xl hover:bg-indigo-500 transition-all disabled:opacity-30 flex items-center gap-3">
+                               ÜRET <span className="material-symbols-outlined">play_circle</span>
                             </button>
                           </div>
-                        ))}
-                        <button
-                          onClick={() => {
-                            const newTags = [...editableContent.tags, 'yeni-etiket'];
-                            updateEditableField('tags', newTags);
-                          }}
-                          className="px-3 py-1.5 border-2 border-dashed border-slate-400 rounded-full hover:border-blue-500 hover:bg-blue-50 transition-all flex items-center gap-1"
-                        >
-                          <svg className="w-3 h-3 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg>
-                          <span className="text-xs font-bold text-slate-600">Etiket Ekle</span>
-                        </button>
-                      </>
-                    ) : (
-                      productContent.tags.map((tag, i) => (
-                        <span key={i} className="bg-slate-100 text-slate-700 px-3 py-1.5 rounded-full text-xs font-bold border border-slate-200">
-                          {tag}
-                        </span>
-                      ))
-                    )}
-                  </div>
-                </div>
+                        </div>
+                      </div>
+                    </div>
 
-                {/* SEO Kelimeleri Bölümü */}
-                <div className="space-y-4">
-                  <h3 className="text-xs font-black text-black uppercase tracking-widest flex items-center gap-2"><span className="w-6 h-0.5 bg-black"></span>{t.seoKeys}</h3>
-                  <div className="bg-slate-50 p-4 rounded-2xl border-2 border-slate-200">
-                    <p className="text-sm text-slate-700 font-medium leading-relaxed">
-                      {productContent.tags.join(', ')}
-                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+                      {videos.map(vid => (
+                        <div key={vid.id} className="bg-white rounded-[4rem] p-8 shadow-sm border border-slate-200 space-y-8 hover:shadow-2xl transition-all duration-500">
+                          <video src={vid.url} controls className="w-full rounded-[2.5rem] shadow-2xl aspect-video object-cover border-8 border-slate-50" />
+                          <div className="space-y-4 px-4 pb-4">
+                             <div className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">REKLAM SENARYOSU</div>
+                             <p className="font-black text-lg leading-snug text-slate-800">"{vid.prompt}"</p>
+                             <div className="flex gap-4 pt-4">
+                               <a href={vid.url} download={`${vid.id}.mp4`} className="bg-slate-900 text-white px-8 py-3 rounded-2xl font-black text-[10px] tracking-widest flex items-center gap-2 shadow-lg hover:bg-black transition-all">
+                                 <span className="material-symbols-outlined text-sm">download</span> MP4 İNDİR
+                               </a>
+                             </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-
-                <div className="pt-10 border-t border-slate-100 flex justify-between items-center">
-                  <div className="flex gap-4">
-                    <div className="space-y-2"><label className="text-[10px] uppercase font-black block text-black">{t.format}</label><select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value as AspectRatio)} className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-xs font-black outline-none text-black"><option value="1:1">1:1</option><option value="16:9">16:9</option></select></div>
-                    <div className="space-y-2"><label className="text-[10px] uppercase font-black block text-black">{t.quality}</label><select value={imageSize} onChange={(e) => setImageSize(e.target.value as ImageSize)} className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-xs font-black outline-none text-black"><option value="1K">1K</option><option value="2K">2K</option></select></div>
-                  </div>
-                  <div className="text-right"><p className="text-[10px] font-black text-black uppercase tracking-widest">AI Engine</p><p className="text-xs font-bold text-black">Gemini 3.0 Pro</p></div>
-                </div>
+                )}
               </div>
             </div>
           </div>
         )}
       </main>
+
+      <footer className="py-32 border-t border-slate-200 mt-20 relative overflow-hidden bg-white">
+        <div className="absolute -bottom-20 -left-20 w-80 h-80 bg-indigo-500/5 blur-[100px] rounded-full"></div>
+        <div className="max-w-7xl mx-auto px-8 flex flex-col items-center gap-12 text-center relative z-10">
+          <div className="flex items-center gap-3 grayscale opacity-30">
+            <div className="w-10 h-10 bg-slate-900 rounded-xl flex items-center justify-center text-white font-black text-xl">S</div>
+            <h1 className="text-xl font-black text-slate-900 tracking-tighter">VİTRİN STÜDYO</h1>
+          </div>
+          <div className="flex gap-12 text-[10px] font-black uppercase tracking-[0.4em] text-slate-400">
+            <span className="hover:text-indigo-600 cursor-pointer transition-colors">DERİN ANALİZ</span>
+            <span className="hover:text-indigo-600 cursor-pointer transition-colors">4K STÜDYO</span>
+            <span className="hover:text-indigo-600 cursor-pointer transition-colors">VEO VİDEO</span>
+          </div>
+          <p className="text-[10px] font-black text-slate-300 tracking-[0.5em]">&copy; 2024 DESIGNED BY AI FOR GLOBAL E-COMMERCE</p>
+        </div>
+      </footer>
     </div>
   );
 };

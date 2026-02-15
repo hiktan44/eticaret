@@ -4,7 +4,7 @@ export const translations = {
     appTitle: "AI Ürün Stüdyosu",
     ecommerceIntel: "E-Ticaret Zekası",
     newProduct: "Yeni Ürün",
-    resetConfirm: "Tüm verileriniz silinecek. Yeni bir ürün için sıfırlamak istediğinize emin misiniz?",
+    resetConfirm: "Tüm verileriniz silinecek. Başlangıç ekranına dönmek istediğinize emin misiniz?",
     heroTitle: "Ürününüzü Yapay Zeka ile Pazarlayın",
     heroDesc: "Ham fotoğraflarınızı yükleyin; saniyeler içinde profesyonel içerikler, 4K görseller ve tanıtım videoları oluşturalım.",
     addImg: "Resim Ekle",
@@ -19,7 +19,7 @@ export const translations = {
     startProduction: "Üretimi Başlat",
     quickEdit: "Hızlı AI Düzenleme",
     editPlaceholder: "Örn: 'Arka planı plaj yap'",
-    apply: "Resim Üret",
+    apply: "Uygula",
     videoStudio: "Video Stüdyosu",
     videoPromptPlaceholder: "Video sahnelerini detaylandırın...",
     videoDuration: "VİDEO SÜRESİ",
@@ -45,15 +45,32 @@ export const translations = {
     preparingExport: "Görsel döküman hazırlanıyor...",
     format: "Format",
     quality: "Kalite",
-    productName: "Ürün İsmi (Opsiyonel)",
-    productDesc: "Ürün Tarifi / Notlar",
-    techDocs: "Teknik Belgeler (PDF/Resim)"
+    // Technical Specs
+    techSpecs: "Teknik Özellikler",
+    barcode: "Barkod",
+    productCode: "Ürün Kodu",
+    brand: "Marka",
+    production: "Üretim",
+    weight: "Ağırlık",
+    productDimensions: "Ürün Ebatları",
+    boxDimensions: "Kutu Ebatları",
+    ageRange: "Yaş Aralığı",
+    gender: "Cinsiyet",
+    // Analysis Context
+    analysisPromptLabel: "Ek Bilgiler & Özel İstekler",
+    analysisPromptPlaceholder: "Örn: Barkod: 868000..., Katalog bilgisi veya ürünün öne çıkmasını istediğiniz özel bir özelliği...",
+    catalogUploadLabel: "Katalog / Belge Yükle (Opsiyonel)",
+    catalogUploadDesc: "PDF veya Görsel formatında teknik döküman ekleyebilirsiniz.",
+    // New actions
+    editResults: "Düzenle",
+    saveResults: "Kaydet",
+    goHome: "Ana Sayfaya Dön"
   },
   en: {
     appTitle: "AI Product Studio",
     ecommerceIntel: "E-Commerce Intelligence",
     newProduct: "New Product",
-    resetConfirm: "All data will be deleted. Are you sure you want to reset for a new product?",
+    resetConfirm: "All data will be deleted. Are you sure you want to return to start?",
     heroTitle: "Market Your Product with AI",
     heroDesc: "Upload your raw photos; let us create professional content, 4K visuals, and promotional videos in seconds.",
     addImg: "Add Image",
@@ -68,7 +85,7 @@ export const translations = {
     startProduction: "Start Production",
     quickEdit: "Quick AI Edit",
     editPlaceholder: "e.g. 'Make the background a beach'",
-    apply: "Generate Image",
+    apply: "Apply",
     videoStudio: "Video Studio",
     videoPromptPlaceholder: "Detail the video scenes...",
     videoDuration: "VIDEO DURATION",
@@ -94,8 +111,25 @@ export const translations = {
     preparingExport: "Preparing visual document...",
     format: "Format",
     quality: "Quality",
-    productName: "Product Name (Optional)",
-    productDesc: "Product Description / Notes",
-    techDocs: "Technical Docs (PDF/Image)"
+    // Technical Specs
+    techSpecs: "Technical Specifications",
+    barcode: "Barcode",
+    productCode: "Product Code",
+    brand: "Brand",
+    production: "Production",
+    weight: "Weight",
+    productDimensions: "Product Dimensions",
+    boxDimensions: "Box Dimensions",
+    ageRange: "Age Range",
+    gender: "Gender",
+    // Analysis Context
+    analysisPromptLabel: "Additional Info & Custom Requests",
+    analysisPromptPlaceholder: "e.g. Barcode: 868000..., Catalog info or a specific feature you want highlighted...",
+    catalogUploadLabel: "Upload Catalog / Document (Optional)",
+    catalogUploadDesc: "You can add technical documents in PDF or Image format.",
+    // New actions
+    editResults: "Edit",
+    saveResults: "Save",
+    goHome: "Back to Home"
   }
 };

@@ -6,32 +6,38 @@ export interface ProductContent {
   suggestedPrice: string;
   category: string;
   tags: string[];
+  // Technical Specifications
+  barcode: string;
+  productCode: string;
+  brand: string;
+  production: string;
+  weight: string;
+  productDimensions: string;
+  boxDimensions: string;
+  ageRange: string;
+  gender: string;
+  // Market Info
+  marketTrends?: string[];
+  competitorPrices?: { source: string; price: string; url: string }[];
+  // Grounding
+  groundingUrls?: { title?: string; uri?: string }[];
 }
 
 export interface ImageAsset {
   id: string;
   url: string;
-  type: 'original' | 'generated';
+  type: 'original' | 'generated' | 'edited';
   prompt?: string;
-  altText?: string;
+  aspectRatio?: string;
+  size?: string;
 }
 
 export interface VideoAsset {
   id: string;
   url: string;
-  thumbnailUrl: string;
+  type: 'veo-generation';
+  prompt: string;
 }
 
-export enum AspectRatio {
-  SQUARE = '1:1',
-  LANDSCAPE = '16:9',
-  PORTRAIT = '9:16',
-  THREE_FOUR = '3:4',
-  FOUR_THREE = '4:3'
-}
-
-export enum ImageSize {
-  K1 = '1K',
-  K2 = '2K',
-  K4 = '4K'
-}
+export type AspectRatio = '1:1' | '2:3' | '3:2' | '3:4' | '4:3' | '9:16' | '16:9' | '21:9';
+export type ImageSize = '1K' | '2K' | '4K';

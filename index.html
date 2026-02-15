@@ -1,135 +1,85 @@
+
 <!DOCTYPE html>
-<html class="light" lang="tr">
-
+<html lang="tr">
 <head>
-  <meta charset="utf-8" />
-  <meta content="width=device-width, initial-scale=1.0" name="viewport" />
-  <title>AI Ürün Stüdyosu - Ürün Detayı</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&amp;display=swap"
-    rel="stylesheet" />
-  <link
-    href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
-    rel="stylesheet" />
-  <script src="https://cdn.tailwindcss.com?plugins=forms,typography,container-queries"></script>
-  <script>
-    tailwind.config = {
-      darkMode: "class",
-      theme: {
-        extend: {
-          colors: {
-            primary: "#3B82F6",
-            navy: {
-              50: "#f0f4f8",
-              800: "#1e3a8a",
-              900: "#0f172a",
-              950: "#0B1120", // deeper intense navy
-            },
-            emerald: {
-              50: '#ecfdf5',
-              100: '#d1fae5',
-              500: '#10b981',
-              600: '#059669',
-              700: '#047857',
-              800: '#065f46',
-            },
-            orange: {
-              50: '#fff7ed',
-              100: '#ffedd5',
-              500: '#f97316',
-              600: '#ea580c',
-            },
-          },
-          fontFamily: {
-            display: ["Inter", "sans-serif"],
-            sans: ["Inter", "sans-serif"],
-          },
-          borderRadius: {
-            DEFAULT: "0.5rem",
-            '2xl': '1rem',
-            '3xl': '1.5rem',
-            '4xl': '2rem',
-            '5xl': '2.5rem', // Added for larger radiuses
-          },
-          boxShadow: {
-            'soft': '0 4px 6px -1px rgba(0, 0, 0, 0.02), 0 2px 4px -1px rgba(0, 0, 0, 0.02)',
-            'glow': '0 0 15px rgba(16, 185, 129, 0.3)',
-          }
-        },
-      },
-    };
-  </script>
-  <!-- Runtime Environment Variables -->
-  <script src="/env-config.js"></script>
-  <style>
-    .gradient-bg {
-      background: radial-gradient(circle at 5% 5%, rgba(16, 185, 129, 0.06) 0%, transparent 45%),
-        radial-gradient(circle at 95% 5%, rgba(249, 115, 22, 0.06) 0%, transparent 45%),
-        radial-gradient(circle at 50% 120%, rgba(255, 255, 255, 0.8) 0%, transparent 60%);
-      background-color: #F8FAFC;
-    }
-
-    .dark .gradient-bg {
-      background: radial-gradient(circle at 0% 0%, rgba(6, 78, 59, 0.15) 0%, transparent 40%),
-        radial-gradient(circle at 100% 0%, rgba(124, 45, 18, 0.15) 0%, transparent 40%),
-        radial-gradient(circle at 50% 100%, rgba(15, 23, 42, 1) 0%, transparent 50%);
-      background-color: #0F172A;
-    }
-
-    .glass-panel {
-      background: rgba(255, 255, 255, 0.9);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
-      border-bottom: 1px solid rgba(226, 232, 240, 0.6);
-    }
-
-    .dark .glass-panel {
-      background: rgba(15, 23, 42, 0.85);
-      border-bottom: 1px solid rgba(51, 65, 85, 0.5);
-    }
-
-    .scrollbar-hide::-webkit-scrollbar {
-      display: none;
-    }
-
-    .scrollbar-hide {
-      -ms-overflow-style: none;
-      scrollbar-width: none;
-    }
-
-    .text-balance {
-      text-wrap: balance;
-    }
-
-    body {
-      min-height: max(884px, 100dvh);
-    }
-  </style>
-  <script type="importmap">
-    {
-      "imports": {
-        "react/": "https://esm.sh/react@^19.2.3/",
-        "react": "https://esm.sh/react@^19.2.3",
-        "@google/genai": "https://esm.sh/@google/genai@^1.37.0",
-        "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-        "jspdf": "https://esm.sh/jspdf@^2.5.1",
-        "html2canvas": "https://esm.sh/html2canvas@^1.4.1",
-        "jszip": "https://esm.sh/jszip@^3.10.1"
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Ürün Stüdyosu | Akıllı E-Ticaret Çözümü</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@100..700" rel="stylesheet" />
+    <style>
+      body {
+        font-family: 'Plus Jakarta Sans', sans-serif;
+        background-color: #050A15;
+        color: #FFFFFF;
+        min-height: 100vh;
+        overflow-x: hidden;
       }
-    }
-    </script>
+      .home-gradient {
+        background: 
+            radial-gradient(circle at 10% 10%, hsla(160, 84%, 39%, 0.12) 0%, transparent 40%),
+            radial-gradient(circle at 90% 10%, hsla(25, 100%, 50%, 0.12) 0%, transparent 40%),
+            #050A15;
+        background-attachment: fixed;
+      }
+      .result-bg {
+        background-color: #F1F5F9;
+        color: #0F172A;
+      }
+      .glass-card {
+        background: rgba(255, 255, 255, 0.03);
+        backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      /* Result Page Text Colors */
+      .result-bg h1, .result-bg h2, .result-bg h3, .result-bg p, .result-bg span, .result-bg label, .result-bg div:not(.bg-indigo-600):not(.bg-slate-900):not(.text-white) {
+        color: #0F172A !important;
+      }
+      .result-bg .text-white, .result-bg .bg-indigo-600 *, .result-bg .bg-slate-900 * {
+        color: #FFFFFF !important;
+      }
+      .result-bg .text-slate-400 { color: #94A3B8 !important; }
+      .result-bg .text-emerald-600 { color: #059669 !important; }
+      .result-bg .text-orange-500 { color: #F97316 !important; }
+
+      .step-number-bg {
+        position: absolute;
+        right: 20px;
+        top: 0;
+        font-size: 10rem;
+        font-weight: 900;
+        line-height: 1;
+        opacity: 0.1;
+        color: white;
+        user-select: none;
+        pointer-events: none;
+      }
+
+      @keyframes float {
+        0% { transform: translateY(0px); }
+        50% { transform: translateY(-10px); }
+        100% { transform: translateY(0px); }
+      }
+      .animate-float {
+        animation: float 4s ease-in-out infinite;
+      }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "react": "https://esm.sh/react@^19.2.3",
+    "@google/genai": "https://esm.sh/@google/genai@^1.37.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "jspdf": "https://esm.sh/jspdf@^2.5.1",
+    "html2canvas": "https://esm.sh/html2canvas@^1.4.1",
+    "jszip": "https://esm.sh/jszip@^3.10.1"
+  }
+}
+</script>
 </head>
-
-<body
-  class="font-sans mesh-gradient text-slate-100 min-h-screen transition-colors duration-300 antialiased selection:bg-emerald-100 selection:text-emerald-900">
-  <div id="root"></div>
-
-  <script type="module" src="/index.tsx"></script>
-  <script>
-    // Toggle dark mode for testing if needed
-    function toggleDarkMode() {
-      document.documentElement.classList.toggle('dark');
-    }
-  </script>
+<body>
+    <div id="root"></div>
 </body>
-
 </html>

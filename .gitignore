@@ -11,9 +11,6 @@ node_modules
 dist
 dist-ssr
 *.local
-.env
-.env.local
-.env.production
 
 # Editor directories and files
 .vscode/*
@@ -25,7 +22,3 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-
-# Local Netlify folder
-.netlify
-public/env-config.js
